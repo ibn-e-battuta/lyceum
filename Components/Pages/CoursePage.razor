@@ -126,7 +126,7 @@ else
             <button class="btn ghost" disabled="@(prevLesson is null)" @onclick="GoPrev" title="@L["Previous lesson"]">‹ @L["Prev"]</button>
             <div class="lesson-heading">
                 <h1>@lesson.Title</h1>
-                <div class="muted tiny">@CurrentSection?.Title · @L["Lesson {0} of {1}", lessonIndex + 1, lessons.Count]</div>
+                <div class="muted tiny">@SectionTitle(CurrentSection?.Title) · @L["Lesson {0} of {1}", lessonIndex + 1, lessons.Count]</div>
             </div>
             <button class="btn ghost" disabled="@(nextLesson is null)" @onclick="GoNext" title="@L["Next lesson (N)"]">@L["Next"] ›</button>
         </div>
@@ -198,7 +198,7 @@ else
             <div class="section @(open ? "open" : "")">
                 <button class="section-head" @onclick="() => ToggleSection(si)">
                     <div>
-                        <div class="section-title">@section.Title</div>
+                        <div class="section-title">@SectionTitle(section.Title)</div>
                         <div class="muted tiny">@done / @section.Lessons.Count@(section.TotalSeconds > 0 ? $" · {Format.Long(section.TotalSeconds)}" : "")</div>
                     </div>
                     <span class="chev">⌄</span>
@@ -1038,6 +1038,15 @@ else
             </ul>
         }
     };
+
+    /// <summary>Translates the section names the scanner generates; folder-based names are shown as-is.</summary>
+    private string SectionTitle(string? title)
+    {
+        if (title is null) return "";
+        if (title is "Course Content" or "Main Lessons" or "Getting Started") return L[title];
+        var m = System.Text.RegularExpressions.Regex.Match(title, @"^Section (\d+)(: (.*))?$");
+        return m.Success ? L["Section {0}", m.Groups[1].Value] + (m.Groups[3].Success ? ": " + m.Groups[3].Value : "") : title;
+    }
 
     private static string AttIcon(string ext) => ext switch
     {

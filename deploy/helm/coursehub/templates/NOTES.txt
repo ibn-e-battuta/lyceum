@@ -1,0 +1,7 @@
+CourseHub is starting.
+{{- if .Values.ingress.enabled }}
+Open https://{{ .Values.ingress.host }} and create the admin account.
+{{- else }}
+  kubectl port-forward svc/{{ include "coursehub.fullname" . }} 8080:{{ .Values.service.port }}
+Then open http://localhost:8080 and create the admin account.
+{{- end }}

@@ -47,8 +47,14 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 LABEL org.opencontainers.image.title="CourseHub" \
       org.opencontainers.image.description="Self-hosted, Udemy-style player for your own video courses"
 
+ARG TARGETARCH
+# VAAPI drivers for hardware video conversion: Intel (iHD for Broadwell and newer, i965 for older) and AMD (mesa).
+# Pass the GPU in with `devices: [/dev/dri:/dev/dri]`; NVIDIA uses the NVIDIA Container Toolkit instead.
 RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg libgomp1 tzdata curl \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg libgomp1 tzdata curl mesa-va-drivers vainfo \
+ && if [ "$TARGETARCH" = "amd64" ]; then \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends intel-media-va-driver i965-va-driver; \
+    fi \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=whisper /out /opt/whisper

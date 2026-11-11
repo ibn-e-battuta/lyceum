@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coursehub.fullname" . }}
+  labels: {{- include "coursehub.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # never two pods on the same SQLite database
+  selector:
+    matchLabels: {{- include "coursehub.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "coursehub.selector" . | nindent 8 }}
+    spec:
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: coursehub
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - { name: TZ, value: {{ .Values.timezone | quote }} }
+            - { name: CourseHub__RescanIntervalMinutes, value: {{ .Values.rescanIntervalMinutes | quote }} }
+            - { name: CourseHub__TrustForwardedHeaders, value: {{ .Values.ingress.enabled | quote }} }
+            {{- if or .Values.admin.username .Values.admin.existingSecret }}
+            - name: COURSEHUB_ADMIN_USER
+              valueFrom: { secretKeyRef: { name: {{ .Values.admin.existingSecret | default (include "coursehub.fullname" .) }}, key: username } }
+            - name: COURSEHUB_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.admin.existingSecret | default (include "coursehub.fullname" .) }}, key: password } }
+            {{- end }}
+            {{- if .Values.oidc.authority }}
+            - { name: Oidc__Authority, value: {{ .Values.oidc.authority | quote }} }
+            - { name: Oidc__ClientId, value: {{ .Values.oidc.clientId | quote }} }
+            - { name: Oidc__DisplayName, value: {{ .Values.oidc.displayName | quote }} }
+            - { name: Oidc__AdminGroup, value: {{ .Values.oidc.adminGroup | quote }} }
+            - { name: Oidc__DisablePasswordLogin, value: {{ .Values.oidc.disablePasswordLogin | quote }} }
+            - name: Oidc__ClientSecret
+              valueFrom: { secretKeyRef: { name: {{ .Values.oidc.existingSecret | default (include "coursehub.fullname" .) }}, key: clientSecret } }
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - { name: config, mountPath: /config }
+            - { name: courses, mountPath: /courses, readOnly: {{ .Values.courses.readOnly }} }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- $res := deepCopy .Values.resources }}
+            {{- if .Values.gpuResources }}
+            {{- $_ := set $res "limits" (merge (default dict $res.limits) .Values.gpuResources) }}
+            {{- end }}
+            {{- toYaml $res | nindent 12 }}
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-config" (include "coursehub.fullname" .)) }}
+        - name: courses
+          {{- if .Values.courses.existingClaim }}
+          persistentVolumeClaim: { claimName: {{ .Values.courses.existingClaim }}, readOnly: {{ .Values.courses.readOnly }} }
+          {{- else if .Values.courses.nfs.server }}
+          nfs: { server: {{ .Values.courses.nfs.server }}, path: {{ .Values.courses.nfs.path }}, readOnly: {{ .Values.courses.readOnly }} }
+          {{- else if .Values.courses.hostPath }}
+          hostPath: { path: {{ .Values.courses.hostPath }}, type: Directory }
+          {{- else }}
+          {{- fail "Set courses.existingClaim, courses.nfs or courses.hostPath" }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

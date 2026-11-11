@@ -1,0 +1,69 @@
+image:
+  repository: ghcr.io/OWNER/coursehub
+  tag: ""            # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent
+
+# CourseHub keeps its state in SQLite and holds live UI connections in memory: run exactly one replica.
+podSecurityContext:
+  runAsUser: 1654
+  runAsGroup: 1654
+  fsGroup: 1654
+
+timezone: Etc/UTC
+rescanIntervalMinutes: 30
+
+# Where your courses are. Pick one of: existingClaim, hostPath, or nfs.
+courses:
+  existingClaim: ""
+  hostPath: ""
+  nfs: {}            # { server: 10.0.0.5, path: /export/courses }
+  readOnly: true
+
+# CourseHub's own data (database, keys, thumbnails, transcripts, converted videos, models).
+persistence:
+  existingClaim: ""
+  storageClass: ""
+  size: 20Gi
+
+# Optional: create the first admin automatically.
+admin:
+  username: ""
+  password: ""
+  existingSecret: ""     # keys: username, password
+
+# Optional OpenID Connect single sign-on.
+oidc:
+  authority: ""
+  clientId: ""
+  clientSecret: ""
+  existingSecret: ""     # key: clientSecret
+  displayName: Single sign-on
+  adminGroup: ""
+  disablePasswordLogin: false
+
+extraEnv: []             # [{ name: MediaTools__WhisperModel, value: ggml-small.bin }]
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  host: courses.example.com
+  tls: []                # [{ secretName: courses-tls, hosts: [courses.example.com] }]
+  annotations:
+    # The UI uses a long-lived WebSocket; keep it open.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 4Gi }   # Whisper and video conversion need headroom
+
+# e.g. { gpu.intel.com/i915: 1 } with the Intel device plugin, or nvidia.com/gpu: 1
+gpuResources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

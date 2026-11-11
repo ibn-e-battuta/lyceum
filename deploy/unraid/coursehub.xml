@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!-- Unraid Community Applications template for CourseHub. Replace OWNER with the GitHub account that publishes the image. -->
+<Container version="2">
+  <Name>CourseHub</Name>
+  <Repository>ghcr.io/OWNER/coursehub:latest</Repository>
+  <Registry>https://github.com/OWNER/coursehub/pkgs/container/coursehub</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/OWNER/coursehub/issues</Support>
+  <Project>https://github.com/OWNER/coursehub</Project>
+  <Overview>Self-hosted, Udemy-style player for video courses you own. Progress tracking, notes and bookmarks, transcripts and search (Whisper, on your server), AI study tools, multiple users and libraries, offline downloads.</Overview>
+  <Category>MediaServer:Video Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/OWNER/coursehub/main/wwwroot/icon-512.png</Icon>
+  <ExtraParams>--user 99:100</ExtraParams>
+  <Requires>Optional: add --device=/dev/dri to Extra Parameters for Intel/AMD hardware video conversion.</Requires>
+  <Config Name="Web UI port" Target="8080" Default="8080" Mode="tcp" Description="Port for the web interface." Type="Port" Display="always" Required="true">8080</Config>
+  <Config Name="Courses" Target="/courses" Default="/mnt/user/courses" Mode="ro" Description="Folder with one sub-folder per course. Change to rw if admins should be able to edit course details (course.json) from the UI." Type="Path" Display="always" Required="true">/mnt/user/courses</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/coursehub" Mode="rw" Description="Database, sign-in keys, thumbnails, transcripts, converted videos and speech models." Type="Path" Display="always" Required="true">/mnt/user/appdata/coursehub</Config>
+  <Config Name="Time zone" Target="TZ" Default="Etc/UTC" Mode="" Description="Used for daily stats and streaks, e.g. Europe/London." Type="Variable" Display="always" Required="false">Etc/UTC</Config>
+  <Config Name="Behind a reverse proxy" Target="CourseHub__TrustForwardedHeaders" Default="false" Mode="" Description="Set to true when using SWAG, Nginx Proxy Manager, Traefik… (remember to enable WebSocket support)." Type="Variable" Display="advanced" Required="false">false</Config>
+  <Config Name="Initial admin user" Target="COURSEHUB_ADMIN_USER" Default="" Mode="" Description="Optional: create the first admin automatically instead of using the setup page." Type="Variable" Display="advanced" Required="false"></Config>
+  <Config Name="Initial admin password" Target="COURSEHUB_ADMIN_PASSWORD" Default="" Mode="" Description="Optional, used together with the initial admin user." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="SSO authority" Target="Oidc__Authority" Default="" Mode="" Description="Optional OpenID Connect issuer URL (Authentik, Authelia, Keycloak…)." Type="Variable" Display="advanced" Required="false"></Config>
+  <Config Name="SSO client id" Target="Oidc__ClientId" Default="" Mode="" Description="OpenID Connect client id." Type="Variable" Display="advanced" Required="false"></Config>
+  <Config Name="SSO client secret" Target="Oidc__ClientSecret" Default="" Mode="" Description="OpenID Connect client secret." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="SSO admin group" Target="Oidc__AdminGroup" Default="" Mode="" Description="Members of this group become CourseHub admins." Type="Variable" Display="advanced" Required="false"></Config>
+</Container>

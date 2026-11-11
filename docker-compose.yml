@@ -17,4 +17,24 @@ services:
       # COURSEHUB_ADMIN_PASSWORD: change-me-please
       # Behind a reverse proxy (Nginx Proxy Manager, Caddy, Traefik, SWAG…):
       # CourseHub__TrustForwardedHeaders: "true"
+      # Single sign-on (Authentik, Authelia, Keycloak…), see README:
+      # Oidc__Authority: https://auth.example.com/application/o/coursehub/
+      # Oidc__ClientId: coursehub
+      # Oidc__ClientSecret: change-me
+      # Oidc__AdminGroup: coursehub-admins
+    # Intel/AMD hardware video conversion (choose VAAPI in Settings → Video playback):
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add: ["video", "render"]
+    # Reach Ollama running on the host for the AI tools (http://host.docker.internal:11434/v1):
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
     restart: unless-stopped
+
+  # Optional: a local AI model for summaries, quizzes and "ask this course".
+  # Use http://ollama:11434/v1 in Settings → AI, then: docker compose exec ollama ollama pull llama3.2
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   volumes:
+  #     - ./ollama:/root/.ollama
+  #   restart: unless-stopped
