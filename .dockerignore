@@ -1,0 +1,15 @@
+bin/
+obj/
+storage/
+keys/
+config/
+*.db
+*.db-*
+*.bak
+**/.DS_Store
+.vs/
+.vscode/
+.idea/
+.git/
+docker-compose*.yml
+dotnet-tools.json

@@ -1,0 +1,312 @@
+@page "/"
+@inherits AppPage
+@implements IDisposable
+@inject CourseLibrary Library
+@inject ProgressService ProgressService
+@inject UserDataService UserData
+@inject TranscriptService Transcripts
+@inject MediaTools Tools
+
+<PageTitle>My Learning · CourseHub</PageTitle>
+
+<TopNav>
+    <input class="search" type="search" placeholder="Search courses, lessons and transcripts…" @bind="query" @bind:event="oninput" @bind:after="SearchTranscripts" />
+    @if (IsAdmin)
+    {
+        <button class="btn ghost hide-mobile" @onclick="Rescan" disabled="@scanning" title="Pick up new or changed course folders">
+            @(scanning ? "Scanning…" : "↻ Rescan")
+        </button>
+    }
+</TopNav>
+
+<main class="home">
+    @if (Library.Courses.Count == 0)
+    {
+        <div class="empty">
+            <h1>No courses found</h1>
+            <p>Put each course in its own folder inside <code>@Library.RootPath</code>. New folders show up automatically.</p>
+        </div>
+    }
+    else if (!string.IsNullOrWhiteSpace(query))
+    {
+        <h1 class="page-title">Results for “@query”</h1>
+        @if (matchingCourses.Count > 0)
+        {
+            <div class="grid">
+                @foreach (var c in matchingCourses) { @CourseCard(c) }
+            </div>
+        }
+        @if (matchingLessons.Count > 0)
+        {
+            <h2 class="row-title">Lessons</h2>
+            <ul class="lesson-results">
+                @foreach (var (course, lesson) in matchingLessons.Take(60))
+                {
+                    <li>
+                        <a href="@($"course/{course.Id}/{lesson.Id}")">
+                            @LessonThumb(lesson)
+                            <span class="t">@lesson.Title<span class="muted tiny block">@course.Title</span></span>
+                            <span class="muted tiny">@Format.Clock(lesson.DurationSeconds)</span>
+                        </a>
+                    </li>
+                }
+            </ul>
+        }
+        @if (transcriptHits.Count > 0)
+        {
+            <h2 class="row-title">Said in a lesson</h2>
+            <ul class="lesson-results">
+                @foreach (var h in transcriptHits)
+                {
+                    <li>
+                        <a href="@($"course/{h.Course.Id}/{h.Lesson.Id}?t={(int)h.Start}")">
+                            @LessonThumb(h.Lesson)
+                            <span class="t">
+                                “@Highlight(h.Text)”
+                                <span class="muted tiny block">@h.Lesson.Title · @h.Course.Title</span>
+                            </span>
+                            <span class="stamp">@Format.Clock(Math.Max(h.Start, 0.5))</span>
+                        </a>
+                    </li>
+                }
+            </ul>
+        }
+        @if (matchingCourses.Count == 0 && matchingLessons.Count == 0 && transcriptHits.Count == 0)
+        {
+            <p class="muted">Nothing matches.@(query.Trim().Length < 3 ? " Type at least 3 letters to search transcripts." : "")</p>
+        }
+    }
+    else
+    {
+        <h1 class="page-title">My learning</h1>
+        <div class="summary">
+            <div><strong>@Library.Courses.Count</strong><span>courses</span></div>
+            <div><strong>@Library.Courses.Sum(c => c.LessonCount)</strong><span>lessons</span></div>
+            <div><strong>@Format.Long(Library.Courses.Sum(c => c.TotalSeconds))</strong><span>of video</span></div>
+            <div><strong>@stats.Values.Sum(s => s.Completed)</strong><span>lessons completed</span></div>
+        </div>
+
+        @if (inProgress.Count > 0)
+        {
+            <h2 class="row-title">Continue learning</h2>
+            <div class="continue">
+                @foreach (var c in inProgress)
+                {
+                    var s = stats[c.Id];
+                    <a class="continue-card" href="@ResumeHref(c)">
+                        <div class="thumb small" style="@ThumbStyle(c, s.ResumeLesson)">
+                            <span class="play">▶</span>
+                        </div>
+                        <div class="continue-body">
+                            <div class="muted tiny">@c.Title</div>
+                            <div class="continue-lesson">@s.ResumeLesson?.Title</div>
+                            <div class="bar"><span style="width:@(s.Percent)%"></span></div>
+                            <div class="muted tiny">@s.Percent% complete · @Format.Ago(s.LastWatched!.Value)</div>
+                        </div>
+                    </a>
+                }
+            </div>
+        }
+
+        @if (paths.Count > 0)
+        {
+            <h2 class="row-title">Learning paths <a class="tiny accent" href="/paths">Manage →</a></h2>
+            <div class="continue">
+                @foreach (var p in paths)
+                {
+                    var courses = p.Items.Select(i => Library.GetCourseByFolder(i.CoursePath)).OfType<Course>().ToList();
+                    var done = courses.Sum(c => stats[c.Id].Completed);
+                    var total = courses.Sum(c => stats[c.Id].Total);
+                    var next = courses.FirstOrDefault(c => stats[c.Id].Completed < stats[c.Id].Total);
+                    <a class="continue-card path-card" href="@(next is null ? "/paths" : ResumeHref(next))">
+                        <div class="continue-body">
+                            <div class="continue-lesson">🧭 @p.Name</div>
+                            <div class="muted tiny">@courses.Count courses · next: @(next?.Title ?? "all done 🎉")</div>
+                            <div class="bar"><span style="width:@(total == 0 ? 0 : 100 * done / total)%"></span></div>
+                            <div class="muted tiny">@(total == 0 ? 0 : 100 * done / total)% complete</div>
+                        </div>
+                    </a>
+                }
+            </div>
+        }
+
+        <div class="row-title with-filters">
+            <h2>Courses</h2>
+            <div class="chips">
+                @foreach (var f in Filters)
+                {
+                    var n = Filtered(f).Count();
+                    <button class="chip @(filter == f ? "active" : "")" @onclick="() => filter = f">@f <span class="muted">@n</span></button>
+                }
+            </div>
+        </div>
+        <div class="grid">
+            @foreach (var c in Filtered(filter)) { @CourseCard(c) }
+        </div>
+        @if (!Filtered(filter).Any())
+        {
+            <p class="muted">No courses here.</p>
+        }
+    }
+</main>
+
+@code {
+    private static readonly string[] Filters = ["All", "In progress", "Not started", "Completed", "Favourites", "Archived"];
+
+    private Dictionary<string, CourseStats> stats = [];
+    private Dictionary<string, CourseMeta> meta = [];
+    private List<Course> inProgress = [];
+    private List<LearningPath> paths = [];
+    private List<TranscriptHit> transcriptHits = [];
+    private string query = "";
+    private string filter = "All";
+    private bool scanning;
+
+    private string Q => query.Trim();
+
+    private List<Course> matchingCourses => Library.Courses
+        .Where(c => c.Title.Contains(Q, StringComparison.OrdinalIgnoreCase) || (c.Author?.Contains(Q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+
+    private List<(Course, Lesson)> matchingLessons => Library.Courses
+        .SelectMany(c => c.AllLessons.Select(l => (c, l)))
+        .Where(x => x.l.Title.Contains(Q, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private CourseMeta MetaOf(Course c) => meta.GetValueOrDefault(c.FolderName) ?? new CourseMeta();
+
+    private IEnumerable<Course> Filtered(string f) => Library.Courses.Where(c =>
+    {
+        var s = stats.GetValueOrDefault(c.Id);
+        var m = MetaOf(c);
+        var complete = s is not null && s.Total > 0 && s.Completed == s.Total;
+        return f switch
+        {
+            "Archived" => m.Archived,
+            _ when m.Archived => false,
+            "In progress" => s?.Started == true && !complete,
+            "Not started" => s?.Started != true,
+            "Completed" => complete,
+            "Favourites" => m.Favorite,
+            _ => true,
+        };
+    }).OrderByDescending(c => MetaOf(c).Favorite);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EnsureUserAsync();
+        Library.Changed += OnLibraryChanged;
+        await LoadStats();
+    }
+
+    private void OnLibraryChanged() => InvokeAsync(async () => { await LoadStats(); StateHasChanged(); });
+    public void Dispose() => Library.Changed -= OnLibraryChanged;
+
+    private async Task LoadStats()
+    {
+        stats = await ProgressService.StatsAsync(UserId, Library.Courses);
+        meta = await UserData.AllMetaAsync(UserId);
+        paths = (await UserData.PathsAsync(UserId)).Where(p => p.Items.Count > 0).ToList();
+        inProgress = Library.Courses
+            .Where(c => stats[c.Id].Started && stats[c.Id].Completed < stats[c.Id].Total && !MetaOf(c).Archived)
+            .OrderByDescending(c => stats[c.Id].LastWatched)
+            .Take(6)
+            .ToList();
+    }
+
+    private async Task SearchTranscripts()
+    {
+        var q = Q;
+        if (q.Length < 3) { transcriptHits = []; return; }
+        await Task.Delay(250); // debounce typing
+        if (q != Q) return;
+        transcriptHits = await Transcripts.SearchAsync(q);
+    }
+
+    private async Task Rescan()
+    {
+        scanning = true;
+        await Library.RescanAsync();
+        await LoadStats();
+        scanning = false;
+    }
+
+    private async Task ToggleFavorite(Course c)
+    {
+        var m = await UserData.UpdateMetaAsync(UserId, c, x => x.Favorite = !x.Favorite);
+        meta[c.FolderName] = m;
+    }
+
+    private string ResumeHref(Course c) =>
+        stats.TryGetValue(c.Id, out var s) && s.ResumeLesson is not null ? $"course/{c.Id}/{s.ResumeLesson.Id}" : $"course/{c.Id}";
+
+    private string ThumbStyle(Course c, Lesson? lesson = null)
+    {
+        var img = lesson is { Kind: LessonKind.Video } ? lesson.ThumbUrl : c.CoverUrl;
+        return $"background-image:url('{img}'), {Format.Gradient(c.Title)}";
+    }
+
+    private MarkupString Highlight(string text)
+    {
+        var enc = System.Net.WebUtility.HtmlEncode(text);
+        var q = System.Net.WebUtility.HtmlEncode(Q);
+        var i = enc.IndexOf(q, StringComparison.OrdinalIgnoreCase);
+        return i < 0 ? new MarkupString(enc) : new MarkupString($"{enc[..i]}<mark>{enc.Substring(i, q.Length)}</mark>{enc[(i + q.Length)..]}");
+    }
+
+    private RenderFragment LessonThumb(Lesson l) => __builder =>
+    {
+        if (l.Kind == LessonKind.Video)
+        {
+            <span class="lthumb" style="background-image:url('@l.ThumbUrl')"></span>
+        }
+        else
+        {
+            <span class="lthumb doc">📄</span>
+        }
+    };
+
+    private RenderFragment CourseCard(Course c) => __builder =>
+    {
+        var s = stats.GetValueOrDefault(c.Id);
+        var m = MetaOf(c);
+        var firstVideo = c.AllLessons.FirstOrDefault(l => l.Kind == LessonKind.Video);
+        <div class="card">
+            <a href="@ResumeHref(c)" class="card-link">
+                <div class="thumb" style="background:@Format.Gradient(c.Title)">
+                    <span class="initials">@Format.Initials(c.Title)</span>
+                    @if (c.CoverPath is not null || (firstVideo is not null && Tools.Ffmpeg is not null))
+                    {
+                        <span class="thumb-img" style="background-image:url('@c.CoverUrl')"></span>
+                    }
+                    else if (firstVideo is not null && firstVideo.FullPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+                    {
+                        @* No ffmpeg: let the browser render a frame from the first lesson. *@
+                        <video class="thumb-frame" src="@($"{firstVideo.MediaUrl}#t=20")" preload="metadata" muted playsinline tabindex="-1"></video>
+                    }
+                    @if (s?.Started == true)
+                    {
+                        <div class="thumb-bar"><span style="width:@(s.Percent)%"></span></div>
+                    }
+                </div>
+                <div class="card-body">
+                    <h3>@c.Title</h3>
+                    @if (!string.IsNullOrWhiteSpace(c.Author)) { <div class="muted tiny">@c.Author</div> }
+                    <div class="muted tiny">
+                        @c.LessonCount lessons@(c.Sections.Count > 1 ? $" · {c.Sections.Count} sections" : "")@(c.TotalSeconds > 0 ? $" · {Format.Long(c.TotalSeconds)}" : "")
+                    </div>
+                    @if (s?.Started == true)
+                    {
+                        <div class="card-progress">
+                            <div class="bar"><span style="width:@(s.Percent)%"></span></div>
+                            <span class="tiny">@(s.Completed == s.Total ? "✓ Completed" : $"{s.Percent}%")</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="tiny accent">Start course →</div>
+                    }
+                </div>
+            </a>
+            <button class="fav @(m.Favorite ? "on" : "")" title="@(m.Favorite ? "Remove from favourites" : "Add to favourites")" @onclick="() => ToggleFavorite(c)">@(m.Favorite ? "★" : "☆")</button>
+        </div>
+    };
+}

@@ -1,0 +1,92 @@
+@page "/stats"
+@inherits AppPage
+@inject StatsService Stats
+
+<PageTitle>Stats · CourseHub</PageTitle>
+
+<TopNav />
+
+<main class="home narrow">
+    <h1 class="page-title">Learning stats</h1>
+
+    @if (s is null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else
+    {
+        <div class="summary">
+            <div><strong>🔥 @s.CurrentStreak</strong><span>day streak</span></div>
+            <div><strong>@s.LongestStreak</strong><span>longest streak</span></div>
+            <div><strong>@Hours(s.Last7DaysSeconds)</strong><span>last 7 days</span></div>
+            <div><strong>@Hours(s.DailyAverageSeconds)</strong><span>daily average (14 days)</span></div>
+            <div><strong>@Hours(s.TotalSeconds)</strong><span>total watched</span></div>
+            <div><strong>@s.ActiveDays</strong><span>active days</span></div>
+        </div>
+
+        <h2 class="row-title">Last 30 days</h2>
+        <div class="panel">
+            @{ var max = Math.Max(s.Last30Days.Max(d => d.Seconds), 600); }
+            <div class="chart" role="img" aria-label="Minutes watched per day for the last 30 days">
+                @foreach (var d in s.Last30Days)
+                {
+                    var h = d.Seconds / max * 100;
+                    var label = $"{d.Day:ddd d MMM}: {Minutes(d.Seconds)}";
+                    <div class="chart-col" title="@label">
+                        <div class="chart-bar @(d.Day == Today ? "today" : "")" style="height:@(Math.Max(h, d.Seconds > 0 ? 2 : 0).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))%"></div>
+                        <div class="chart-label">@(d.Day.Day == 1 || d.Day == s.Last30Days[0].Day || d.Day == Today ? d.Day.ToString("d MMM") : "")</div>
+                    </div>
+                }
+            </div>
+            <div class="muted tiny chart-caption">Minutes of video watched per day (actual viewing time, so faster playback counts less). Peak: @Minutes(s.Last30Days.Max(d => d.Seconds)).</div>
+        </div>
+
+        <h2 class="row-title">Courses</h2>
+        <div class="panel table-wrap">
+            <table class="stats-table">
+                <thead>
+                    <tr><th>Course</th><th>Progress</th><th>Watched</th><th>Left</th><th>Finish at your pace</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var f in s.Courses.Where(f => f.Stats.Started || f.WatchedSeconds > 0))
+                    {
+                        <tr>
+                            <td><a href="@($"course/{f.Course.Id}")">@f.Course.Title</a></td>
+                            <td>
+                                <div class="bar"><span style="width:@(f.Stats.Percent)%"></span></div>
+                                <span class="muted tiny">@f.Stats.Completed / @f.Stats.Total</span>
+                            </td>
+                            <td>@Hours(f.WatchedSeconds)</td>
+                            <td>@(f.RemainingSeconds > 0 ? Format.Long(f.RemainingSeconds) : "—")</td>
+                            <td>
+                                @if (f.Stats.Completed == f.Stats.Total) { <span class="good">✓ Done</span> }
+                                else if (f.EstimatedFinish is { } d) { <span>@d.ToString("d MMM yyyy")</span> <span class="muted tiny">(@((d.DayNumber - Today.DayNumber)) days)</span> }
+                                else { <span class="muted tiny">Watch a bit more to get an estimate</span> }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @if (!s.Courses.Any(f => f.Stats.Started))
+            {
+                <p class="muted">Start a course and your progress will show up here.</p>
+            }
+        </div>
+    }
+</main>
+
+@code {
+    private LearningStats? s;
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Now);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EnsureUserAsync();
+        s = await Stats.GetAsync(UserId);
+    }
+
+    private static string Hours(double seconds) =>
+        seconds < 60 ? $"{Math.Round(seconds)}s" : seconds < 3600 ? $"{Math.Round(seconds / 60)}m" : $"{(int)(seconds / 3600)}h {(int)(seconds % 3600 / 60)}m";
+
+    private static string Minutes(double seconds) => $"{Math.Round(seconds / 60)} min";
+}

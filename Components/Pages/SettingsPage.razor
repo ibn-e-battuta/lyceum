@@ -1,0 +1,407 @@
+@page "/settings"
+@using System.Net.NetworkInformation
+@using System.Net.Sockets
+@inherits AppPage
+@implements IDisposable
+@inject CourseLibrary Library
+@inject MediaTools Tools
+@inject TranscriptService Transcripts
+@inject UserDataService UserData
+@inject UserService Users
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Settings · CourseHub</PageTitle>
+
+<TopNav />
+
+<main class="home narrow settings">
+    <h1 class="page-title">Settings</h1>
+
+    <section class="panel">
+        <h2>Account</h2>
+        <p>Signed in as <strong>@UserName</strong>@(IsAdmin ? " (admin)" : "").</p>
+        <div class="row form-row">
+            <input type="password" placeholder="Current password" autocomplete="current-password" @bind="currentPassword" />
+            <input type="password" placeholder="New password (8+ characters)" autocomplete="new-password" @bind="newPassword" />
+            <button class="btn ghost small" disabled="@(string.IsNullOrEmpty(currentPassword) || string.IsNullOrEmpty(newPassword))" @onclick="ChangeOwnPassword">Change password</button>
+        </div>
+        @if (accountMessage is not null) { <p class="tiny @(accountFailed ? "error" : "good")">@accountMessage</p> }
+        <form method="post" action="/auth/logout" class="logout-form">
+            <button class="btn ghost small" type="submit">Sign out</button>
+        </form>
+    </section>
+
+    @if (IsAdmin)
+    {
+        <section class="panel">
+            <h2>Users</h2>
+            <p class="muted tiny">Everyone gets their own progress, notes, bookmarks, stats and learning paths. Admins can also manage users, rescan the library and run transcription.</p>
+            <table class="stats-table users-table">
+                <thead><tr><th>User</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var u in users)
+                    {
+                        <tr>
+                            <td>@u.Username @(u.Id == UserId ? "(you)" : "")</td>
+                            <td>
+                                <label class="toggle">
+                                    <input type="checkbox" checked="@u.IsAdmin" disabled="@(u.Id == UserId)" @onchange="e => SetAdmin(u, (bool)e.Value!)" /> admin
+                                </label>
+                            </td>
+                            <td class="muted tiny">@(u.LastLoginAt is { } t ? Format.Ago(t) : "never")</td>
+                            <td class="row">
+                                @if (resetFor == u.Id)
+                                {
+                                    <input type="password" placeholder="New password" autocomplete="new-password" @bind="resetPassword" />
+                                    <button class="btn primary small" @onclick="() => ResetPassword(u)">Save</button>
+                                    <button class="btn ghost small" @onclick="() => resetFor = null">Cancel</button>
+                                }
+                                else if (u.Id != UserId)
+                                {
+                                    <button class="btn ghost small" @onclick="() => { resetFor = u.Id; resetPassword = string.Empty; }">Reset password</button>
+                                    @if (confirmDelete == u.Id)
+                                    {
+                                        <button class="btn danger small" @onclick="() => DeleteUser(u)">Delete @u.Username and all their data</button>
+                                        <button class="btn ghost small" @onclick="() => confirmDelete = null">Cancel</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn ghost small" @onclick="() => confirmDelete = u.Id">Delete</button>
+                                    }
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <h3>Add a user</h3>
+            <div class="row form-row">
+                <input placeholder="Username" autocomplete="off" @bind="newUser" />
+                <input type="password" placeholder="Password (8+ characters)" autocomplete="new-password" @bind="newUserPassword" />
+                <label class="toggle"><input type="checkbox" @bind="newUserAdmin" /> admin</label>
+                <button class="btn primary small" @onclick="AddUser">Add user</button>
+            </div>
+            @if (usersMessage is not null) { <p class="tiny @(usersFailed ? "error" : "good")">@usersMessage</p> }
+        </section>
+
+        <section class="panel">
+            <h2>Library</h2>
+            <p>Courses are read from <code>@Library.RootPath</code>. @(Library.Courses.Count) courses, last scanned @Format.Ago(Library.LastScan).</p>
+            <p class="muted tiny">New, renamed or removed course folders are picked up automatically. Add a <code>course.json</code> to a course folder to set its title, author, description, cover or sections (see the README).</p>
+            <button class="btn ghost" @onclick="Rescan" disabled="@scanning">@(scanning ? "Scanning…" : "↻ Rescan now")</button>
+        </section>
+    }
+
+    <section class="panel">
+        <h2>Watch on your phone or tablet</h2>
+        @if (shareUrls.Count == 0)
+        {
+            <p class="muted">Open CourseHub on your other devices using this server's address.</p>
+        }
+        else
+        {
+            <div class="lan">
+                <div id="qr" class="qr"></div>
+                <div>
+                    <p>On your phone or tablet, open:</p>
+                    @foreach (var u in shareUrls) { <div class="lan-url"><code>@u</code></div> }
+                </div>
+            </div>
+        }
+        <p class="muted tiny">
+            To install it like an app: <strong>iPhone/iPad</strong> — Safari → Share → <em>Add to Home Screen</em>.
+            <strong>Android</strong> — Chrome → ⋮ → <em>Install app</em>. Desktop Chrome/Edge show an install icon in the address bar.
+            Your progress is stored on the server, so it's the same on every device.
+        </p>
+    </section>
+
+    @if (IsAdmin)
+    {
+    <section class="panel">
+        <h2>Transcripts &amp; subtitles</h2>
+        <p class="muted tiny">
+            Subtitle files (<code>.srt</code>/<code>.vtt</code>) next to a video are used automatically. For everything else CourseHub can
+            transcribe the audio on the server with Whisper. Nothing is uploaded anywhere.
+        </p>
+        <ul class="checklist">
+            <li class="@(Tools.Ffmpeg is null ? "bad" : "ok")">ffmpeg — @(Tools.Ffmpeg ?? "not found")</li>
+            <li class="@(Tools.Whisper is null ? "bad" : "ok")">whisper.cpp — @(Tools.Whisper ?? "not found")</li>
+            <li class="@(Tools.ModelPresent ? "ok" : "bad")">
+                Speech model <code>@Tools.ModelName</code> —
+                @if (Tools.ModelPresent)
+                {
+                    <span>@(new FileInfo(Tools.ModelPath).Length / 1024 / 1024) MB, ready</span>
+                }
+                else if (Transcripts.ModelDownload is { Error: null } d)
+                {
+                    <span>downloading… @d.Percent.ToString("0")% (@(d.Bytes / 1024 / 1024) MB)</span>
+                    <div class="bar"><span style="width:@(d.Percent.ToString("0", System.Globalization.CultureInfo.InvariantCulture))%"></span></div>
+                }
+                else
+                {
+                    <span>not downloaded.</span>
+                    <button class="btn primary small" @onclick="DownloadModel">Download (~148 MB from Hugging Face)</button>
+                    @if (Transcripts.ModelDownload is { Error: { } err }) { <div class="error tiny">Download failed: @err</div> }
+                }
+            </li>
+        </ul>
+        <p>
+            @indexed lessons have searchable transcripts.
+            @if (Tools.CanTranscribe)
+            {
+                <span class="muted tiny">Whisper runs at roughly 10–20× real time on a modern CPU, so all @Format.Long(Library.Courses.Sum(c => c.TotalSeconds)) can take many hours. CourseHub stays usable meanwhile.</span>
+            }
+        </p>
+        @if (Tools.CanTranscribe)
+        {
+            <div class="row">
+                <select @bind="courseToTranscribe">
+                    <option value="">Choose a course…</option>
+                    @foreach (var c in Library.Courses.Where(c => c.VideoCount > 0))
+                    {
+                        <option value="@c.Id">@c.Title (@c.AllLessons.Count(l => l.Kind == LessonKind.Video && !Transcripts.HasTranscript(l)) left)</option>
+                    }
+                </select>
+                <button class="btn primary small" disabled="@string.IsNullOrEmpty(courseToTranscribe)" @onclick="QueueCourse">Transcribe course</button>
+                <button class="btn ghost small" @onclick="QueueAll">Transcribe everything</button>
+                @if (Transcripts.Jobs.Any(j => j.State is JobState.Queued or JobState.Running))
+                {
+                    <button class="btn ghost small" @onclick="Transcripts.CancelAll">Stop</button>
+                }
+            </div>
+        }
+        @if (message is not null) { <p class="muted tiny">@message</p> }
+        @if (Transcripts.Jobs.Count > 0)
+        {
+            var jobs = Transcripts.Jobs;
+            <div class="jobs">
+                <div class="muted tiny">
+                    @jobs.Count(j => j.State == JobState.Running) running · @jobs.Count(j => j.State == JobState.Queued) queued ·
+                    @jobs.Count(j => j.State == JobState.Done) done · @jobs.Count(j => j.State == JobState.Failed) failed
+                    <button class="link" @onclick="Transcripts.ClearFinished">clear finished</button>
+                </div>
+                @foreach (var j in jobs.Take(12))
+                {
+                    <div class="job @j.State.ToString().ToLowerInvariant()">
+                        <span class="job-title">@j.Title</span>
+                        <span class="muted tiny">
+                            @(j.State switch { JobState.Running => $"{j.Percent}%", JobState.Failed => j.Error, _ => j.State.ToString() })
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+    }
+
+    <section class="panel">
+        <h2>Backup</h2>
+        <p class="muted tiny">Your own progress, notes, bookmarks, stats, favourites and learning paths, in one JSON file. A backup can be restored into any account.</p>
+        <div class="row">
+            <a class="btn primary" href="/api/export" download>⬇ Export backup</a>
+            <a class="btn ghost" href="/api/notes.md" download>⬇ Notes as Markdown</a>
+        </div>
+        <h3>Restore</h3>
+        <p class="muted tiny">Restoring <strong>replaces</strong> everything currently saved in your account with the backup's contents.</p>
+        <label class="toggle"><input type="checkbox" @bind="confirmRestore" /> I understand my current data will be replaced</label>
+        <InputFile OnChange="Restore" accept=".json,application/json" disabled="@(!confirmRestore)" />
+        @if (restoreMessage is not null) { <p class="tiny @(restoreFailed ? "error" : "good")">@restoreMessage</p> }
+    </section>
+
+    @if (IsAdmin)
+    {
+        <section class="panel">
+            <h2>Storage</h2>
+            <p class="muted tiny">Thumbnails, generated transcripts and the speech model live in <code>@Tools.DataDir</code>.</p>
+            <p>@thumbCount thumbnails · @transcriptCount generated transcripts</p>
+            <button class="btn ghost small" @onclick="ClearThumbs">Clear thumbnails</button>
+        </section>
+    }
+</main>
+
+@code {
+    private List<string> shareUrls = [];
+    private List<UserInfo> users = [];
+    private int indexed;
+    private bool scanning;
+    private string courseToTranscribe = "";
+    private string? message;
+    private bool confirmRestore;
+    private string? restoreMessage;
+    private bool restoreFailed;
+    private int thumbCount, transcriptCount;
+    private bool qrDrawn;
+
+    private string currentPassword = "", newPassword = "";
+    private string? accountMessage;
+    private bool accountFailed;
+
+    private string newUser = "", newUserPassword = "";
+    private bool newUserAdmin;
+    private int? resetFor, confirmDelete;
+    private string resetPassword = "";
+    private string? usersMessage;
+    private bool usersFailed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EnsureUserAsync();
+        Transcripts.Changed += OnChanged;
+        shareUrls = ShareUrls();
+        await Refresh();
+    }
+
+    private async Task Refresh()
+    {
+        if (!IsAdmin) return;
+        users = await Users.ListAsync();
+        indexed = await Transcripts.IndexedLessonCountAsync();
+        thumbCount = Directory.EnumerateFiles(Tools.ThumbDir, "*.jpg").Count();
+        transcriptCount = Directory.EnumerateFiles(Tools.TranscriptDir, "*.vtt").Count();
+    }
+
+    private DateTime lastRefresh;
+
+    private void OnChanged() => InvokeAsync(async () =>
+    {
+        // Progress events arrive often; only re-query counts every couple of seconds.
+        if ((DateTime.UtcNow - lastRefresh).TotalSeconds > 2)
+        {
+            lastRefresh = DateTime.UtcNow;
+            await Refresh();
+        }
+        StateHasChanged();
+    });
+
+    public void Dispose() => Transcripts.Changed -= OnChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!qrDrawn && shareUrls.Count > 0)
+        {
+            qrDrawn = true;
+            var helpers = await JS.InvokeAsync<IJSObjectReference>("import", "./helpers.js");
+            await helpers.InvokeVoidAsync("renderQr", "qr", shareUrls[0]);
+        }
+    }
+
+    /// <summary>
+    /// The address other devices should use: the one in the browser bar if it isn't "localhost"
+    /// (e.g. behind a reverse proxy or on a NAS); otherwise this machine's LAN addresses.
+    /// </summary>
+    private List<string> ShareUrls()
+    {
+        var current = new Uri(Nav.BaseUri);
+        if (!current.IsLoopback) return [current.GetLeftPart(UriPartial.Authority)];
+        if (Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true") return [];
+        return NetworkInterface.GetAllNetworkInterfaces()
+            .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+            .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+            .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(a.Address)
+                        && !a.Address.ToString().StartsWith("169.254."))
+            .Select(a => $"{current.Scheme}://{a.Address}:{current.Port}")
+            .Distinct()
+            .ToList();
+    }
+
+    // ---------- account ----------
+
+    private async Task ChangeOwnPassword()
+    {
+        var err = await Users.ChangePasswordAsync(UserId, currentPassword, newPassword);
+        accountFailed = err is not null;
+        accountMessage = err ?? "Password changed. Other devices have been signed out; sign in again on them.";
+        currentPassword = newPassword = "";
+        if (err is null) Nav.NavigateTo("/login?changed=1", forceLoad: true);
+    }
+
+    // ---------- users (admin) ----------
+
+    private void Report(string? err, string ok)
+    {
+        usersFailed = err is not null;
+        usersMessage = err ?? ok;
+    }
+
+    private async Task AddUser()
+    {
+        if (!IsAdmin) return;
+        var (_, err) = await Users.CreateAsync(newUser, newUserPassword, newUserAdmin);
+        Report(err, $"Added {newUser.Trim()}.");
+        if (err is null) { newUser = newUserPassword = ""; newUserAdmin = false; }
+        await Refresh();
+    }
+
+    private async Task SetAdmin(UserInfo u, bool admin)
+    {
+        if (!IsAdmin) return;
+        Report(await Users.SetAdminAsync(u.Id, admin), admin ? $"{u.Username} is now an admin." : $"{u.Username} is no longer an admin.");
+        await Refresh();
+    }
+
+    private async Task ResetPassword(UserInfo u)
+    {
+        if (!IsAdmin) return;
+        Report(await Users.ChangePasswordAsync(u.Id, null, resetPassword), $"Password for {u.Username} changed.");
+        resetFor = null;
+        resetPassword = "";
+    }
+
+    private async Task DeleteUser(UserInfo u)
+    {
+        if (!IsAdmin) return;
+        Report(await Users.DeleteAsync(u.Id), $"Deleted {u.Username}.");
+        confirmDelete = null;
+        await Refresh();
+    }
+
+    // ---------- library & transcripts (admin) ----------
+
+    private async Task Rescan()
+    {
+        if (!IsAdmin) return;
+        scanning = true;
+        await Library.RescanAsync();
+        scanning = false;
+    }
+
+    private Task DownloadModel()
+    {
+        if (IsAdmin) _ = Transcripts.DownloadModelAsync();
+        return Task.CompletedTask;
+    }
+
+    private void QueueAll()
+    {
+        if (IsAdmin) message = $"Queued {Transcripts.EnqueueAll()} lessons.";
+    }
+
+    private void QueueCourse()
+    {
+        if (IsAdmin && Library.GetCourse(courseToTranscribe) is { } c) message = $"Queued {Transcripts.EnqueueCourse(c)} lessons from {c.Title}.";
+    }
+
+    private async Task Restore(InputFileChangeEventArgs e)
+    {
+        restoreFailed = false;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024);
+            restoreMessage = await UserData.ImportAsync(UserId, stream);
+            confirmRestore = false;
+        }
+        catch (Exception ex)
+        {
+            restoreFailed = true;
+            restoreMessage = "Restore failed: " + ex.Message;
+        }
+    }
+
+    private async Task ClearThumbs()
+    {
+        if (!IsAdmin) return;
+        foreach (var f in Directory.EnumerateFiles(Tools.ThumbDir)) File.Delete(f);
+        await Refresh();
+    }
+}

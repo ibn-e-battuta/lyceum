@@ -1,0 +1,124 @@
+@page "/code/{ResourceId}"
+@inherits AppPage
+@inject CourseLibrary Library
+@inject CodeBrowser Code
+@inject IJSRuntime JS
+
+<PageTitle>@(resource?.Folder.Name ?? "Code") · CourseHub</PageTitle>
+
+@if (resource is not { } r)
+{
+    <div class="empty"><h1>Folder not found</h1><a href="/">Back to my courses</a></div>
+}
+else
+{
+    <header class="topbar player-top">
+        <a class="brand" href="/" title="My learning"><span class="logo">▶</span></a>
+        <a class="muted hide-mobile" href="@($"course/{r.Course.Id}")">@r.Course.Title</a>
+        <span class="muted hide-mobile">/</span>
+        <div class="course-title">📁 @r.Folder.Name</div>
+        <a class="btn ghost small" href="@($"/code/{ResourceId}/zip")" download>⬇ Zip</a>
+        @if (CanOpenLocalApps && IsAdmin)
+        {
+            <button class="btn ghost small" @onclick='() => Open("vscode")'>VS Code</button>
+            <button class="btn ghost small hide-mobile" @onclick='() => Open("rider")'>Rider</button>
+            <button class="btn ghost small hide-mobile" @onclick='() => Open("finder")'>Finder</button>
+        }
+    </header>
+    @if (openError is not null) { <div class="banner error">@openError</div> }
+
+    <div class="code-layout">
+        <aside class="file-tree">
+            <input class="search" placeholder="Filter files…" @bind="filter" @bind:event="oninput" />
+            @if (files.Count >= CodeBrowser.MaxFiles) { <div class="muted tiny">Showing the first @CodeBrowser.MaxFiles files.</div> }
+            <ul>
+                @foreach (var f in files.Where(f => filter.Length == 0 || f.RelativePath.Contains(filter, StringComparison.OrdinalIgnoreCase)))
+                {
+                    <li class="@(f.RelativePath == selected ? "current" : "")">
+                        <button @onclick="() => Select(f.RelativePath)" title="@f.RelativePath">
+                            <span class="dir muted">@Dir(f.RelativePath)</span>@System.IO.Path.GetFileName(f.RelativePath)
+                        </button>
+                    </li>
+                }
+            </ul>
+        </aside>
+        <section class="code-view">
+            @if (selected is null)
+            {
+                <p class="muted pad">Pick a file on the left.</p>
+            }
+            else
+            {
+                <div class="code-head">
+                    <code>@selected</code>
+                    <a class="btn ghost small push" href="@($"/code/{ResourceId}/raw?path={Uri.EscapeDataString(selected)}")" download>Download</a>
+                    @if (CanOpenLocalApps && IsAdmin)
+                    {
+                        <button class="btn ghost small" @onclick='() => Open("vscode", selected)'>Open in VS Code</button>
+                    }
+                </div>
+                @if (content is null)
+                {
+                    <p class="muted pad">@reason</p>
+                }
+                else
+                {
+                    <pre @key="selected"><code id="code-block" class="language-@CodeBrowser.Language(selected)">@content</code></pre>
+                }
+            }
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public string ResourceId { get; set; } = "";
+    [SupplyParameterFromQuery(Name = "file")] public string? File { get; set; }
+
+    private (Course Course, ResourceFolder Folder)? resource;
+    private List<CodeFile> files = [];
+    private string filter = "";
+    private string? selected;
+    private string? content;
+    private string? reason;
+    private string? openError;
+    private bool highlightPending;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await EnsureUserAsync();
+        resource = Library.GetResource(ResourceId);
+        if (resource is null) return;
+        files = Code.ListFiles(resource.Value.Folder);
+        var start = File ?? files.FirstOrDefault(f => f.RelativePath.EndsWith("README.md", StringComparison.OrdinalIgnoreCase))?.RelativePath
+                    ?? files.FirstOrDefault(f => f.RelativePath.EndsWith("Program.cs"))?.RelativePath
+                    ?? files.FirstOrDefault(f => CodeBrowser.Language(f.RelativePath) != "plaintext")?.RelativePath;
+        if (start is not null) Select(start);
+    }
+
+    private static string Dir(string path)
+    {
+        var d = System.IO.Path.GetDirectoryName(path);
+        return string.IsNullOrEmpty(d) ? "" : d.Replace('\\', '/') + "/";
+    }
+
+    private void Select(string path)
+    {
+        selected = path;
+        (content, reason) = Code.Read(resource!.Value.Folder, path);
+        highlightPending = content is not null;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!highlightPending) return;
+        highlightPending = false;
+        var helpers = await JS.InvokeAsync<IJSObjectReference>("import", "./helpers.js");
+        await helpers.InvokeVoidAsync("highlight", "code-block");
+    }
+
+    private async Task Open(string with, string? path = null)
+    {
+        var module = await JS.InvokeAsync<IJSObjectReference>("import", "./player.js");
+        openError = await module.InvokeAsync<string?>("openWith", with, ResourceId, path ?? "");
+    }
+}

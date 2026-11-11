@@ -1,0 +1,35 @@
+@inject NavigationManager Nav
+@implements IDisposable
+
+<header class="topbar">
+    <a class="brand" href="/"><span class="logo">▶</span><span class="hide-mobile">CourseHub</span></a>
+    <nav class="nav">
+        @foreach (var (href, label) in Links)
+        {
+            <a href="@href" class="@(IsActive(href) ? "active" : "")">@label</a>
+        }
+    </nav>
+    @ChildContent
+    <AuthorizeView>
+        <a class="user-chip hide-mobile" href="/settings" title="Account settings">@context.User.Identity?.Name</a>
+    </AuthorizeView>
+</header>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private static readonly (string Href, string Label)[] Links =
+    [
+        ("/", "My learning"), ("/paths", "Paths"), ("/notes", "Notes"), ("/stats", "Stats"), ("/settings", "Settings"),
+    ];
+
+    private bool IsActive(string href)
+    {
+        var path = "/" + Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0];
+        return href == "/" ? path == "/" : path.StartsWith(href);
+    }
+
+    protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
+    private void OnLocationChanged(object? s, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) => InvokeAsync(StateHasChanged);
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}

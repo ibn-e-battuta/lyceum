@@ -1,0 +1,154 @@
+@page "/paths"
+@inherits AppPage
+@inject UserDataService UserData
+@inject ProgressService ProgressService
+@inject CourseLibrary Library
+
+<PageTitle>Learning paths · CourseHub</PageTitle>
+
+<TopNav />
+
+<main class="home narrow">
+    <div class="page-head">
+        <h1 class="page-title">Learning paths</h1>
+    </div>
+    <p class="muted">Put courses in the order you want to take them, e.g. <em>Getting Started Rust → Deep Dive Rust</em>.</p>
+
+    <form class="row new-path" @onsubmit="Create">
+        <input placeholder="New path name, e.g. “Rust track”" @bind="newName" @bind:event="oninput" />
+        <button class="btn primary" type="submit" disabled="@string.IsNullOrWhiteSpace(newName)">Create path</button>
+    </form>
+
+    @foreach (var p in paths)
+    {
+        var courses = p.Items.Select(i => (Item: i, Course: Library.GetCourseByFolder(i.CoursePath))).ToList();
+        var next = courses.FirstOrDefault(x => x.Course is not null && !IsComplete(x.Course)).Course;
+        <section class="panel path">
+            <div class="path-head">
+                @if (renaming == p.Id)
+                {
+                    <input @bind="renameText" @bind:event="oninput" />
+                    <button class="btn primary small" @onclick="() => Rename(p)">Save</button>
+                }
+                else
+                {
+                    <h2>🧭 @p.Name</h2>
+                    <button class="icon-btn" title="Rename" @onclick="() => { renaming = p.Id; renameText = p.Name; }">✎</button>
+                }
+                <span class="push muted tiny">@PathPercent(courses.Select(x => x.Course))% complete</span>
+                <button class="icon-btn" title="Delete path" @onclick="() => Delete(p)">🗑</button>
+            </div>
+
+            <ol class="path-steps">
+                @foreach (var (item, course) in courses)
+                {
+                    var s = course is null ? null : stats.GetValueOrDefault(course.Id);
+                    <li class="@(course is not null && IsComplete(course) ? "done" : course == next ? "next" : "")">
+                        <span class="step-dot">@(course is not null && IsComplete(course) ? "✓" : "")</span>
+                        <div class="step-body">
+                            @if (course is null)
+                            {
+                                <div class="muted">@item.CoursePath (folder missing)</div>
+                            }
+                            else
+                            {
+                                <a href="@($"course/{course.Id}")">@course.Title</a>
+                                <div class="bar"><span style="width:@(s?.Percent ?? 0)%"></span></div>
+                                <div class="muted tiny">@(s?.Completed ?? 0) / @course.LessonCount lessons · @Format.Long(course.TotalSeconds)@(course == next ? " · up next" : "")</div>
+                            }
+                        </div>
+                        <div class="step-actions">
+                            <button class="icon-btn" title="Move up" @onclick="() => Move(p, item, -1)">↑</button>
+                            <button class="icon-btn" title="Move down" @onclick="() => Move(p, item, 1)">↓</button>
+                            <button class="icon-btn" title="Remove from path" @onclick="() => Remove(item)">✕</button>
+                        </div>
+                    </li>
+                }
+            </ol>
+
+            <div class="row">
+                <select @bind="adding[p.Id]">
+                    <option value="">Add a course…</option>
+                    @foreach (var c in Library.Courses.Where(c => p.Items.All(i => i.CoursePath != c.FolderName)))
+                    {
+                        <option value="@c.FolderName">@c.Title</option>
+                    }
+                </select>
+                <button class="btn ghost small" disabled="@string.IsNullOrEmpty(adding.GetValueOrDefault(p.Id))" @onclick="() => Add(p)">Add</button>
+                @if (next is not null)
+                {
+                    <a class="btn primary small push" href="@($"course/{next.Id}")">Continue: @next.Title →</a>
+                }
+            </div>
+        </section>
+    }
+</main>
+
+@code {
+    private List<LearningPath> paths = [];
+    private Dictionary<string, CourseStats> stats = [];
+    private readonly Dictionary<int, string> adding = [];
+    private string newName = "";
+    private int? renaming;
+    private string renameText = "";
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        await EnsureUserAsync();
+        paths = await UserData.PathsAsync(UserId);
+        stats = await ProgressService.StatsAsync(UserId, Library.Courses);
+        foreach (var p in paths) adding.TryAdd(p.Id, "");
+    }
+
+    private bool IsComplete(Course c) => stats.TryGetValue(c.Id, out var s) && s.Total > 0 && s.Completed == s.Total;
+
+    private int PathPercent(IEnumerable<Course?> courses)
+    {
+        var list = courses.OfType<Course>().ToList();
+        var total = list.Sum(c => stats[c.Id].Total);
+        return total == 0 ? 0 : 100 * list.Sum(c => stats[c.Id].Completed) / total;
+    }
+
+    private async Task Create()
+    {
+        if (string.IsNullOrWhiteSpace(newName)) return;
+        await UserData.CreatePathAsync(UserId, newName);
+        newName = "";
+        await Load();
+    }
+
+    private async Task Rename(LearningPath p)
+    {
+        if (!string.IsNullOrWhiteSpace(renameText)) await UserData.RenamePathAsync(UserId, p.Id, renameText);
+        renaming = null;
+        await Load();
+    }
+
+    private async Task Delete(LearningPath p)
+    {
+        await UserData.DeletePathAsync(UserId, p.Id);
+        await Load();
+    }
+
+    private async Task Add(LearningPath p)
+    {
+        var folder = adding.GetValueOrDefault(p.Id);
+        if (Library.GetCourseByFolder(folder ?? "") is { } c) await UserData.AddToPathAsync(UserId, p.Id, c);
+        adding[p.Id] = "";
+        await Load();
+    }
+
+    private async Task Move(LearningPath p, LearningPathItem item, int dir)
+    {
+        await UserData.MoveInPathAsync(UserId, p.Id, item.Id, dir);
+        await Load();
+    }
+
+    private async Task Remove(LearningPathItem item)
+    {
+        await UserData.RemoveFromPathAsync(UserId, item.Id);
+        await Load();
+    }
+}

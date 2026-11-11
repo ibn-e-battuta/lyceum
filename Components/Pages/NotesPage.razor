@@ -1,0 +1,99 @@
+@page "/notes"
+@inherits AppPage
+@inject UserDataService UserData
+@inject CourseLibrary Library
+
+<PageTitle>My notes · CourseHub</PageTitle>
+
+<TopNav>
+    <input class="search" type="search" placeholder="Search notes…" @bind="query" @bind:event="oninput" />
+</TopNav>
+
+<main class="home narrow">
+    <div class="page-head">
+        <h1 class="page-title">My notes</h1>
+        <a class="btn ghost" href="/api/notes.md" download>⬇ Export all as Markdown</a>
+    </div>
+
+    <div class="chips">
+        @foreach (var k in new[] { "All", "Notes", "Bookmarks" })
+        {
+            <button class="chip @(kind == k ? "active" : "")" @onclick="() => kind = k">@k</button>
+        }
+        <select class="push" @bind="courseFilter">
+            <option value="">All courses</option>
+            @foreach (var c in Library.Courses.Where(c => notes.Any(n => n.CoursePath == c.FolderName)))
+            {
+                <option value="@c.FolderName">@c.Title</option>
+            }
+        </select>
+    </div>
+
+    @if (Visible.Count == 0)
+    {
+        <div class="empty small">
+            <p class="muted">No notes yet. While watching a lesson, open the <strong>Notes</strong> tab, or press <kbd>B</kbd> to bookmark a moment.</p>
+        </div>
+    }
+
+    @foreach (var group in Visible.GroupBy(n => n.CoursePath))
+    {
+        var course = Library.GetCourseByFolder(group.Key);
+        <section class="note-group">
+            <h2>@(course?.Title ?? group.Key) <span class="muted tiny">@group.Count()</span></h2>
+            @foreach (var n in group.OrderBy(n => LessonIndex(course, n)).ThenBy(n => n.Seconds))
+            {
+                var found = Library.FindByPath(n.LessonPath);
+                <div class="note">
+                    @if (found is { } f)
+                    {
+                        <a class="stamp" href="@($"course/{f.Course.Id}/{f.Lesson.Id}?t={(int)n.Seconds}")" title="Jump to this moment">
+                            @(f.Lesson.Kind == LessonKind.Video ? Format.Clock(Math.Max(n.Seconds, 0.5)) : "📄")
+                        </a>
+                    }
+                    else
+                    {
+                        <span class="stamp" title="Lesson file missing">?</span>
+                    }
+                    <div class="note-body">
+                        <div class="muted tiny">@(n.Kind == NoteKind.Bookmark ? "🔖 " : "")@(found?.Lesson.Title ?? n.LessonPath)</div>
+                        <div class="note-text">@(string.IsNullOrWhiteSpace(n.Text) ? "Bookmark" : n.Text)</div>
+                    </div>
+                    <div class="note-actions">
+                        <span class="muted tiny">@Format.Ago(n.UpdatedAt)</span>
+                        <button class="icon-btn" title="Delete" @onclick="() => Delete(n)">🗑</button>
+                    </div>
+                </div>
+            }
+        </section>
+    }
+</main>
+
+@code {
+    private List<Note> notes = [];
+    private string query = "";
+    private string kind = "All";
+    private string courseFilter = "";
+
+    private List<Note> Visible => notes.Where(n =>
+        (kind == "All" || (kind == "Notes") == (n.Kind == NoteKind.Note)) &&
+        (courseFilter == "" || n.CoursePath == courseFilter) &&
+        (query.Trim() == "" || n.Text.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)
+            || (Library.FindByPath(n.LessonPath)?.Lesson.Title.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase) ?? false)))
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EnsureUserAsync();
+        notes = await UserData.AllNotesAsync(UserId);
+    }
+
+    private static int LessonIndex(Course? c, Note n) =>
+        c is null ? 0 : c.AllLessons.Select((l, i) => (l, i)).FirstOrDefault(x => x.l.RelativePath == n.LessonPath).i;
+
+    private async Task Delete(Note n)
+    {
+        await UserData.DeleteNoteAsync(UserId, n.Id);
+        notes.Remove(n);
+    }
+}

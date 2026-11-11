@@ -1,0 +1,76 @@
+@page "/login"
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authentication
+@inject UserService Users
+@inject NavigationManager Nav
+
+<PageTitle>Sign in · CourseHub</PageTitle>
+
+<main class="auth">
+    <div class="auth-card">
+        <div class="auth-brand"><span class="logo">▶</span> CourseHub</div>
+        <h1>Sign in</h1>
+        @if (Changed) { <p class="good tiny">Password changed. Sign in with your new password.</p> }
+        <EditForm Model="Input" method="post" OnValidSubmit="SignInAsync" FormName="login">
+            <DataAnnotationsValidator />
+            <label class="field"><span>Username</span><InputText @bind-Value="Input!.Username" autocomplete="username" autofocus /></label>
+            <label class="field"><span>Password</span><InputText type="password" @bind-Value="Input!.Password" autocomplete="current-password" /></label>
+            <label class="toggle"><InputCheckbox @bind-Value="Input!.Remember" /> Keep me signed in</label>
+            @if (error is not null) { <p class="error tiny">@error</p> }
+            <ValidationSummary class="error tiny" />
+            <button class="btn primary wide" type="submit">Sign in</button>
+        </EditForm>
+    </div>
+</main>
+
+@code {
+    [CascadingParameter] private HttpContext HttpContext { get; set; } = default!;
+    [SupplyParameterFromForm] private LoginInput? Input { get; set; }
+    [SupplyParameterFromQuery] private string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery(Name = "changed")] private string? ChangedFlag { get; set; }
+    private bool Changed => ChangedFlag == "1";
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        if (await Users.CountAsync() == 0) Nav.NavigateTo("/setup");
+        else if (HttpMethods.IsGet(HttpContext.Request.Method) && HttpContext.User.Identity?.IsAuthenticated == true) Nav.NavigateTo(SafeReturnUrl);
+    }
+
+    private string SafeReturnUrl =>
+        !string.IsNullOrEmpty(ReturnUrl) && ReturnUrl.StartsWith('/') && !ReturnUrl.StartsWith("//") && !ReturnUrl.StartsWith("/\\") ? ReturnUrl : "/";
+
+    private async Task SignInAsync()
+    {
+        var key = $"{HttpContext.Connection.RemoteIpAddress}|{Input!.Username.Trim().ToLowerInvariant()}";
+        if (Users.IsLockedOut(key))
+        {
+            error = "Too many attempts. Try again in 15 minutes.";
+            Input!.Password = "";
+            return;
+        }
+        var user = await Users.VerifyAsync(Input!.Username, Input!.Password, key);
+        if (user is null)
+        {
+            error = "Wrong username or password.";
+            Input.Password = "";
+            return;
+        }
+        await HttpContext.SignInAsync(UserService.Principal(user), new AuthenticationProperties
+        {
+            IsPersistent = Input!.Remember,
+            ExpiresUtc = Input!.Remember ? DateTimeOffset.UtcNow.AddDays(60) : null,
+        });
+        Nav.NavigateTo(SafeReturnUrl, forceLoad: true);
+    }
+
+    private sealed class LoginInput
+    {
+        [Required] public string Username { get; set; } = "";
+        [Required] public string Password { get; set; } = "";
+        public bool Remember { get; set; } = true;
+    }
+}
