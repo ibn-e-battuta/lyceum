@@ -429,7 +429,9 @@ dotnet ef migrations add <Name> -o Data/Migrations
 `.github/workflows/docker.yml` builds amd64 and arm64 images on native GitHub runners and pushes them to `ghcr.io/<owner>/lyceum`:
 
 - a push to `main` updates `:edge`;
-- a tag such as `v1.0.0` publishes `:1.0.0`, `:1.0` and `:latest`.
+- a tag such as `v1.0.0` publishes `:1.0.0`, `:1.0` and `:latest`, then creates a GitHub Release. Its notes are the tag's message, so write an annotated tag (`git tag -a v1.0.0`); without a message, the notes are generated from the commits.
+
+To release: bump `<Version>` in `Lyceum.csproj` and `version`/`appVersion` in `deploy/helm/lyceum/Chart.yaml`, commit, then `git tag -a vX.Y.Z && git push origin main vX.Y.Z`.
 
 After the first push, make the package public under GitHub → Packages so others can pull it without signing in.
 

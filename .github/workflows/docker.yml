@@ -1,6 +1,6 @@
 # Builds the Lyceum image for amd64 + arm64 and publishes it to GitHub Container Registry.
 #   push to main      -> ghcr.io/<owner>/lyceum:edge
-#   push tag v1.2.3   -> :1.2.3, :1.2, :latest
+#   push tag v1.2.3   -> :1.2.3, :1.2, :latest, plus a GitHub Release (notes from the tag's message)
 name: docker
 
 on:
@@ -108,3 +108,19 @@ jobs:
 
       - name: Inspect
         run: docker buildx imagetools inspect "${{ env.IMAGE }}:${{ steps.meta.outputs.version }}"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: merge
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          title="Lyceum ${TAG#v}"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$title" --notes-from-tag \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$title" --generate-notes
