@@ -116,11 +116,21 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Create GitHub Release
+      - uses: actions/checkout@v4
+      # The release notes are the annotated tag's message, so fetch the real tag object
+      # (actions/checkout turns tags into lightweight ones).
+      - name: Fetch the annotated tag
+        run: git fetch --force origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+      - name: Create or update the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           title="Lyceum ${TAG#v}"
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$title" --notes-from-tag \
-            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$title" --generate-notes
+          notes="$(git tag -l --format='%(contents)' "$TAG")"
+          if [ -z "$notes" ]; then notes="$(gh api repos/$GITHUB_REPOSITORY/releases/generate-notes -f tag_name="$TAG" --jq .body)"; fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$title" --notes "$notes"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$title" --notes "$notes"
+          fi

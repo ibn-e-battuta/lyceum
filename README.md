@@ -179,7 +179,7 @@ Each app runs fine on its own: Lyceum without Lectern simply has no synced docum
 
 ### Running both
 
-Add Lectern to the same compose file. Lectern has no published image; Compose builds it from its repository:
+Add Lectern to the same compose file:
 
 ```yaml
 # docker-compose.yml
@@ -197,7 +197,7 @@ services:
     restart: unless-stopped
 
   lectern:
-    build: https://github.com/ibn-e-battuta/lectern.git#main
+    image: ghcr.io/ibn-e-battuta/lectern:latest
     user: "1000:1000"
     ports:
       - "127.0.0.1:8790:8790"                           # web UI, this machine only
@@ -219,7 +219,7 @@ Then add documents at **http://localhost:8790**, and watch the course in Lyceum 
 |---|---|
 | Start only Lyceum, or only Lectern | `docker compose up -d lyceum` · `docker compose up -d lectern` |
 | Stop one, keep the other running | `docker compose stop lectern` |
-| Update | `docker compose pull lyceum && docker compose build --pull lectern && docker compose up -d` |
+| Update both | `docker compose pull && docker compose up -d` |
 
 See Lectern's README for its settings, schedule and command line.
 
