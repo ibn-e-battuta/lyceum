@@ -1,6 +1,6 @@
 services:
   coursehub:
-    image: ghcr.io/OWNER/coursehub:latest
+    image: ghcr.io/ibn-e-battuta/coursehub:latest
     container_name: coursehub
     user: "1026:100"                    # your DSM user (see README)
     ports:

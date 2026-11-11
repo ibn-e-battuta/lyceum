@@ -29,7 +29,7 @@ Built with ASP.NET Core (.NET 10), Blazor Server and SQLite. It ships as one Doc
 | Synology DSM 7.2+ | [`deploy/synology`](deploy/synology/README.md) |
 | Kubernetes (Helm) | [`deploy/helm/coursehub`](deploy/helm/coursehub/values.yaml): `helm install coursehub ./deploy/helm/coursehub --set courses.nfs.server=…,courses.nfs.path=…` |
 
-Replace `OWNER` in the image name (`ghcr.io/OWNER/coursehub`) with the GitHub account that publishes it.
+Images are published to `ghcr.io/ibn-e-battuta/coursehub` (`:latest` for releases, `:edge` for the main branch). If you fork the project, your fork publishes to `ghcr.io/<your-account>/coursehub`.
 
 ## Quick start (Docker)
 
@@ -37,7 +37,7 @@ Replace `OWNER` in the image name (`ghcr.io/OWNER/coursehub`) with the GitHub ac
 # docker-compose.yml
 services:
   coursehub:
-    image: ghcr.io/OWNER/coursehub:latest
+    image: ghcr.io/ibn-e-battuta/coursehub:latest
     container_name: coursehub
     user: "1000:1000"                        # your user id/group id (`id -u`, `id -g`)
     ports:

@@ -1,6 +1,6 @@
 services:
   coursehub:
-    image: ghcr.io/OWNER/coursehub:latest
+    image: ghcr.io/ibn-e-battuta/coursehub:latest
     user: "568:568"                     # TrueNAS "apps" user
     ports:
       - "8080:8080"

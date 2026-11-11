@@ -1,7 +1,7 @@
 # CourseHub — copy this file, change the paths, then: docker compose up -d
 services:
   coursehub:
-    image: ghcr.io/OWNER/coursehub:latest   # replace OWNER, or use `build: .` to build from source
+    image: ghcr.io/ibn-e-battuta/coursehub:latest   # or use `build: .` to build from source
     container_name: coursehub
     # Run as your own user so CourseHub can write to ./config. Find your ids with `id -u` / `id -g`.
     user: "1000:1000"

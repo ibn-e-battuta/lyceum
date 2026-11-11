@@ -1,18 +1,18 @@
 <?xml version="1.0"?>
-<!-- Unraid Community Applications template for CourseHub. Replace OWNER with the GitHub account that publishes the image. -->
+<!-- Unraid Community Applications template for CourseHub. -->
 <Container version="2">
   <Name>CourseHub</Name>
-  <Repository>ghcr.io/OWNER/coursehub:latest</Repository>
-  <Registry>https://github.com/OWNER/coursehub/pkgs/container/coursehub</Registry>
+  <Repository>ghcr.io/ibn-e-battuta/coursehub:latest</Repository>
+  <Registry>https://github.com/ibn-e-battuta/course-hub/pkgs/container/coursehub</Registry>
   <Network>bridge</Network>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/OWNER/coursehub/issues</Support>
-  <Project>https://github.com/OWNER/coursehub</Project>
+  <Support>https://github.com/ibn-e-battuta/course-hub/issues</Support>
+  <Project>https://github.com/ibn-e-battuta/course-hub</Project>
   <Overview>Self-hosted, Udemy-style player for video courses you own. Progress tracking, notes and bookmarks, transcripts and search (Whisper, on your server), AI study tools, multiple users and libraries, offline downloads.</Overview>
   <Category>MediaServer:Video Productivity:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
-  <Icon>https://raw.githubusercontent.com/OWNER/coursehub/main/wwwroot/icon-512.png</Icon>
+  <Icon>https://raw.githubusercontent.com/ibn-e-battuta/course-hub/main/wwwroot/icon-512.png</Icon>
   <ExtraParams>--user 99:100</ExtraParams>
   <Requires>Optional: add --device=/dev/dri to Extra Parameters for Intel/AMD hardware video conversion.</Requires>
   <Config Name="Web UI port" Target="8080" Default="8080" Mode="tcp" Description="Port for the web interface." Type="Port" Display="always" Required="true">8080</Config>
