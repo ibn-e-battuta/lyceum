@@ -277,19 +277,15 @@ public sealed partial class AiService(
 
     // ---------- ask the course ----------
 
-    /// <summary>Finds the transcript passages most related to a question (simple TF-IDF over ~45 s windows).</summary>
-    public async Task<List<AiSource>> RetrieveAsync(Course course, string question, int take = 6)
-    {
-        var terms = Words(question).Where(w => w.Length > 2 && !StopWords.Contains(w)).Distinct().ToList();
-        if (terms.Count == 0) return [];
+    // ---------- retrieval: keywords + meaning ----------
 
+    /// <summary>Transcript passages of roughly 45 seconds, the unit for both keyword and semantic search.</summary>
+    private async Task<List<(Lesson Lesson, double Start, string Text)>> PassagesAsync(Course course)
+    {
         var lessonsByPath = course.AllLessons.ToDictionary(l => l.RelativePath);
         await using var db = await dbFactory.CreateDbContextAsync();
         var cues = await db.Cues.AsNoTracking().Where(c => lessonsByPath.Keys.Contains(c.LessonPath))
             .OrderBy(c => c.LessonPath).ThenBy(c => c.Start).ToListAsync();
-        if (cues.Count == 0) return [];
-
-        // Group cues into passages of roughly 45 seconds.
         var passages = new List<(Lesson Lesson, double Start, string Text)>();
         foreach (var g in cues.GroupBy(c => c.LessonPath))
         {
@@ -299,14 +295,46 @@ public sealed partial class AiService(
             {
                 if (start < 0) start = c.Start;
                 sb.Append(c.Text).Append(' ');
-                if (c.End - start >= 45) { passages.Add((lessonsByPath[g.Key], start, sb.ToString())); sb.Clear(); start = -1; }
+                if (c.End - start >= 45) { passages.Add((lessonsByPath[g.Key], start, sb.ToString().Trim())); sb.Clear(); start = -1; }
             }
-            if (sb.Length > 0) passages.Add((lessonsByPath[g.Key], start, sb.ToString()));
+            if (sb.Length > 0) passages.Add((lessonsByPath[g.Key], start, sb.ToString().Trim()));
         }
+        return passages;
+    }
 
-        var docFreq = terms.ToDictionary(t => t, t => passages.Count(p => p.Text.Contains(t, StringComparison.OrdinalIgnoreCase)));
-        var scored = passages.Select(p =>
+    /// <summary>
+    /// Finds the passages most related to a question. With an embedding model configured, passages are ranked by
+    /// meaning (cosine similarity) blended with a TF-IDF keyword score, so exact terms still count. Otherwise keywords only.
+    /// </summary>
+    public async Task<List<AiSource>> RetrieveAsync(Course course, string question, int take = 6)
+    {
+        var passages = await PassagesAsync(course);
+        if (passages.Count == 0) return [];
+
+        var keyword = KeywordScores(passages, question);
+        var semantic = await SemanticScoresAsync(course, passages, question);
+
+        double Norm(double v, double max) => max <= 0 ? 0 : v / max;
+        var kMax = keyword.Length == 0 ? 0 : keyword.Max();
+        var ranked = passages.Select((p, i) =>
         {
+            var k = Norm(keyword[i], kMax);
+            var score = semantic is null ? k : 0.65 * Math.Max(0, semantic[i]) + 0.35 * k;
+            return (p, score);
+        }).Where(x => x.score > 0).OrderByDescending(x => x.score).Take(take).ToList();
+
+        return ranked.Select((x, i) => new AiSource(i + 1, course, x.p.Lesson, x.p.Start, x.p.Text)).ToList();
+    }
+
+    private static double[] KeywordScores(List<(Lesson Lesson, double Start, string Text)> passages, string question)
+    {
+        var terms = Words(question).Where(w => w.Length > 2 && !StopWords.Contains(w)).Distinct().ToList();
+        var scores = new double[passages.Count];
+        if (terms.Count == 0) return scores;
+        var docFreq = terms.ToDictionary(t => t, t => passages.Count(p => p.Text.Contains(t, StringComparison.OrdinalIgnoreCase)));
+        for (var i = 0; i < passages.Count; i++)
+        {
+            var p = passages[i];
             var words = Words(p.Text).ToList();
             double score = 0;
             foreach (var t in terms)
@@ -317,10 +345,135 @@ public sealed partial class AiService(
             }
             // Mention of the lesson title is a strong hint.
             score += terms.Count(t => p.Lesson.Title.Contains(t, StringComparison.OrdinalIgnoreCase)) * 0.5;
-            return (p, score);
-        }).Where(x => x.score > 0).OrderByDescending(x => x.score).Take(take).ToList();
+            scores[i] = score;
+        }
+        return scores;
+    }
 
-        return scored.Select((x, i) => new AiSource(i + 1, course, x.p.Lesson, x.p.Start, x.p.Text.Trim())).ToList();
+    /// <summary>Cosine similarities, or null when semantic search isn't set up or the course isn't indexed yet.</summary>
+    private async Task<double[]?> SemanticScoresAsync(Course course, List<(Lesson Lesson, double Start, string Text)> passages, string question)
+    {
+        var cfg = await settings.GetAsync<AiSettings>();
+        if (!cfg.Enabled || string.IsNullOrWhiteSpace(cfg.EmbeddingModel)) return null;
+
+        var paths = course.AllLessons.Select(l => l.RelativePath).ToList();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var stored = await db.Embeddings.AsNoTracking().Where(e => e.Model == cfg.EmbeddingModel && paths.Contains(e.LessonPath)).ToListAsync();
+        var byKey = stored.GroupBy(e => (e.LessonPath, Math.Round(e.Start, 1))).ToDictionary(g => g.Key, g => g.First());
+        var missing = passages.Count(p => !byKey.ContainsKey((p.Lesson.RelativePath, Math.Round(p.Start, 1))));
+        if (missing > 0) _ = IndexCourseAsync(course); // keep improving in the background
+        if (byKey.Count == 0) return null;
+
+        float[] q;
+        try { q = (await EmbedAsync([question]))[0]; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Embedding the question failed; using keyword search");
+            return null;
+        }
+        return passages.Select(p => byKey.TryGetValue((p.Lesson.RelativePath, Math.Round(p.Start, 1)), out var e) ? Cosine(q, ToFloats(e.Vector)) : 0).ToArray();
+    }
+
+    public async Task<List<float[]>> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct = default)
+    {
+        var (http, cfg) = await ClientAsync();
+        using (http)
+        {
+            var body = new JsonObject
+            {
+                ["model"] = cfg.EmbeddingModel,
+                ["input"] = new JsonArray(inputs.Select(i => (JsonNode)JsonValue.Create(i.Length > 2000 ? i[..2000] : i)).ToArray()),
+            };
+            using var resp = await http.PostAsync("embeddings", new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"), ct);
+            var text = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"The embedding server answered {(int)resp.StatusCode}: {Trim(text)}");
+            var data = JsonNode.Parse(text)?["data"] as JsonArray ?? throw new InvalidOperationException("No embeddings returned.");
+            return data.OrderBy(d => d?["index"]?.GetValue<int>() ?? 0)
+                .Select(d => (d?["embedding"] as JsonArray ?? []).Select(v => v!.GetValue<float>()).ToArray()).ToList();
+        }
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (int Done, int Total)> _indexing = new();
+
+    /// <summary>Progress of a running semantic index build for a course, if any.</summary>
+    public (int Done, int Total)? IndexProgress(Course course) => _indexing.TryGetValue(course.Id, out var p) ? p : null;
+
+    /// <summary>Embeds the course's passages that aren't indexed yet with the configured model. Safe to call repeatedly.</summary>
+    public async Task<int> IndexCourseAsync(Course course, CancellationToken ct = default)
+    {
+        var cfg = await settings.GetAsync<AiSettings>();
+        if (!cfg.Enabled || string.IsNullOrWhiteSpace(cfg.EmbeddingModel)) return 0;
+        if (!_indexing.TryAdd(course.Id, (0, 0))) return 0; // already running
+        try
+        {
+            var passages = await PassagesAsync(course);
+            var paths = course.AllLessons.Select(l => l.RelativePath).ToList();
+            HashSet<(string, double)> have;
+            await using (var db = await dbFactory.CreateDbContextAsync())
+            {
+                have = (await db.Embeddings.AsNoTracking().Where(e => e.Model == cfg.EmbeddingModel && paths.Contains(e.LessonPath))
+                    .Select(e => new { e.LessonPath, e.Start }).ToListAsync()).Select(e => (e.LessonPath, Math.Round(e.Start, 1))).ToHashSet();
+            }
+            var todo = passages.Where(p => !have.Contains((p.Lesson.RelativePath, Math.Round(p.Start, 1)))).ToList();
+            var done = 0;
+            _indexing[course.Id] = (0, todo.Count);
+            foreach (var batch in todo.Chunk(16))
+            {
+                var vectors = await EmbedAsync(batch.Select(b => $"{b.Lesson.Title}: {b.Text}").ToList(), ct);
+                await using var db = await dbFactory.CreateDbContextAsync();
+                for (var i = 0; i < batch.Length && i < vectors.Count; i++)
+                    db.Embeddings.Add(new PassageEmbedding
+                    {
+                        LessonPath = batch[i].Lesson.RelativePath, Start = batch[i].Start, Text = batch[i].Text, Model = cfg.EmbeddingModel!, Vector = ToBytes(vectors[i]),
+                    });
+                await db.SaveChangesAsync(ct);
+                done += batch.Length;
+                _indexing[course.Id] = (done, todo.Count);
+            }
+            if (done > 0) logger.LogInformation("Indexed {Count} passages of {Course} for semantic search", done, course.Title);
+            return done;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Semantic indexing of {Course} failed", course.Title);
+            return 0;
+        }
+        finally
+        {
+            _indexing.TryRemove(course.Id, out _);
+        }
+    }
+
+    public async Task<(int Indexed, int Total)> IndexStatusAsync(Course course)
+    {
+        var cfg = await settings.GetAsync<AiSettings>();
+        var total = (await PassagesAsync(course)).Count;
+        if (string.IsNullOrWhiteSpace(cfg.EmbeddingModel)) return (0, total);
+        var paths = course.AllLessons.Select(l => l.RelativePath).ToList();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        return (await db.Embeddings.CountAsync(e => e.Model == cfg.EmbeddingModel && paths.Contains(e.LessonPath)), total);
+    }
+
+    private static byte[] ToBytes(float[] v)
+    {
+        var bytes = new byte[v.Length * 4];
+        Buffer.BlockCopy(v, 0, bytes, 0, bytes.Length);
+        return bytes;
+    }
+
+    private static float[] ToFloats(byte[] b)
+    {
+        var v = new float[b.Length / 4];
+        Buffer.BlockCopy(b, 0, v, 0, b.Length);
+        return v;
+    }
+
+    private static double Cosine(float[] a, float[] b)
+    {
+        if (a.Length != b.Length || a.Length == 0) return 0;
+        double dot = 0, na = 0, nb = 0;
+        for (var i = 0; i < a.Length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+        return na == 0 || nb == 0 ? 0 : dot / (Math.Sqrt(na) * Math.Sqrt(nb));
     }
 
     public IAsyncEnumerable<string> AskAsync(Course course, string question, IReadOnlyList<AiSource> sources, IReadOnlyList<ChatTurn> history, CancellationToken ct = default)

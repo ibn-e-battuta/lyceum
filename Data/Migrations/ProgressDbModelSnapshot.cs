@@ -141,13 +141,34 @@ namespace CourseHub.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("DailyGoalMinutes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("DailyLimitMinutes")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("DisplayName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GuestCourse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("GuestExpiresAt")
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("IsAdmin")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsGuest")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsKid")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime?>("LastLoginAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastReminderDay")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryAccess")
@@ -157,12 +178,33 @@ namespace CourseHub.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("RecoveryCodes")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReminderTime")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReminderToken")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReminderUrl")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("SecurityStamp")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("ShareActivity")
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("TotpEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("TotpLastStep")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TotpSecret")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Username")
                         .IsRequired()
@@ -220,6 +262,50 @@ namespace CourseHub.Data.Migrations
                     b.ToTable("ExternalLogins");
                 });
 
+            modelBuilder.Entity("CourseHub.Data.GuestLink", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CoursePath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CreatedByUserId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("GuestUserId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Visits")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("GuestLinks");
+                });
+
             modelBuilder.Entity("CourseHub.Data.LearningPath", b =>
                 {
                     b.Property<int>("Id")
@@ -264,6 +350,40 @@ namespace CourseHub.Data.Migrations
                     b.HasIndex("LearningPathId");
 
                     b.ToTable("PathItems");
+                });
+
+            modelBuilder.Entity("CourseHub.Data.LessonComment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CoursePath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LessonPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("Seconds")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LessonPath");
+
+                    b.ToTable("Comments");
                 });
 
             modelBuilder.Entity("CourseHub.Data.LessonProgress", b =>
@@ -344,6 +464,9 @@ namespace CourseHub.Data.Migrations
                     b.Property<double>("Seconds")
                         .HasColumnType("REAL");
 
+                    b.Property<bool>("Shared")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Text")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -361,6 +484,92 @@ namespace CourseHub.Data.Migrations
                     b.HasIndex("UserId", "LessonPath");
 
                     b.ToTable("Notes");
+                });
+
+            modelBuilder.Entity("CourseHub.Data.PassageEmbedding", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LessonPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("Start")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Vector")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LessonPath", "Model");
+
+                    b.ToTable("Embeddings");
+                });
+
+            modelBuilder.Entity("CourseHub.Data.ReviewCard", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Back")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CoursePath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Due")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("Ease")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("Front")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("IntervalDays")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("Lapses")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LastReviewedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LessonPath")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Repetitions")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Due");
+
+                    b.HasIndex("UserId", "Front");
+
+                    b.ToTable("ReviewCards");
                 });
 
             modelBuilder.Entity("CourseHub.Data.TranscriptCue", b =>

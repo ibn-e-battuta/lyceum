@@ -17,7 +17,7 @@
         <p class="muted">@L["Create the admin account. You can add more people later in Settings."]</p>
         @if (Oidc.Enabled)
         {
-            <a class="btn primary wide sso-btn" href="/auth/oidc/login">@L["Sign in with {0}", Oidc.DisplayName]</a>
+            <a class="btn primary wide sso-btn" href="auth/oidc/login">@L["Sign in with {0}", Oidc.DisplayName]</a>
             <p class="muted tiny">@L["The first person to sign in becomes the admin."]</p>
             @if (!Oidc.DisablePasswordLogin) { <div class="divider">@L["or create a local admin"]</div> }
         }
@@ -46,7 +46,7 @@
     {
         Input ??= new();
         // Setup is only open until the first account exists.
-        if (await Users.CountAsync() > 0) Nav.NavigateTo("/login");
+        if (await Users.CountAsync() > 0) Nav.NavigateTo("login");
     }
 
     private async Task CreateAsync()
@@ -64,7 +64,7 @@
             return;
         }
         await HttpContext.SignInAsync(UserService.Principal(user), new AuthenticationProperties { IsPersistent = true });
-        Nav.NavigateTo("/", forceLoad: true);
+        Nav.NavigateTo("./", forceLoad: true);
     }
 
     private sealed class SetupInput

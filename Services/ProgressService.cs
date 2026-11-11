@@ -79,6 +79,7 @@ public sealed class ProgressService(IDbContextFactory<ProgressDb> dbFactory, ISe
             var w = await db.WatchDays.FindAsync(userId, day, course.FolderName);
             if (w is null) db.WatchDays.Add(w = new WatchDay { UserId = userId, Day = day, CoursePath = course.FolderName });
             w.Seconds += Math.Min(watchedSeconds, 120);
+            services.GetRequiredService<WatchTimeService>().Add(userId, Math.Min(watchedSeconds, 120));
         }
         row.PositionSeconds = position;
         if (duration > 0) row.DurationSeconds = duration;

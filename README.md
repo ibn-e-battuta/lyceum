@@ -2,21 +2,25 @@
 
 A self-hosted, Udemy-style player for video courses you already own. Point it at a folder of courses and you get a course library with progress tracking, notes, transcripts, AI study tools and stats, for everyone in your household. It's in the spirit of Audiobookshelf (for audiobooks) and Komga (for comics).
 
-Built with ASP.NET Core (.NET 10), Blazor Server and SQLite. It ships as one Docker image for **amd64** and **arm64**, with ffmpeg and whisper.cpp included. Licensed under [AGPL-3.0](LICENSE).
+Built with ASP.NET Core (.NET 10), Blazor Server and SQLite. It ships as one Docker image for **amd64** and **arm64** (including a [Raspberry Pi 4 or 5](#raspberry-pi)), with ffmpeg and whisper.cpp included. Licensed under [AGPL-3.0](LICENSE).
 
 ## Features
 
 - **Library:** every folder becomes a course. Sub-folders become sections, and long flat courses are split into sections automatically. Thumbnails, lesson lengths and chapters are read from the files. New folders appear on their own. You can have **several libraries** (for example "Programming" and "Kids") and choose which users see which.
-- **Plays every video:** MP4, WebM, MKV, AVI, MOV, WMV, TS… Files a browser can't play are repackaged (fast and lossless) or converted to H.264 the first time someone opens them. Conversion can use **Intel/AMD (VAAPI, QSV), NVIDIA (NVENC) or Apple (VideoToolbox)** hardware.
-- **Player:** resumes where you stopped and autoplays the next lesson. It also has chapter markers, picture-in-picture, a mini player when you scroll, speed in 0.1× steps, a skip-intro setting per course, and keyboard shortcuts.
+- **Plays every video:** MP4, WebM, MKV, AVI, MOV, WMV, TS… Files a browser can't play are repackaged (fast and lossless) or converted to H.264 the first time someone opens them. Conversion can use **Intel/AMD (VAAPI, QSV), NVIDIA (NVENC), Raspberry Pi 4 (V4L2) or Apple (VideoToolbox)** hardware. A folder's `cover.jpg`, `folder.png`, `poster.webp`… becomes the course's cover.
+- **Player:** resumes where you stopped and autoplays the next lesson. It also has chapter markers, picture-in-picture, a mini player when you scroll, speed in 0.1× steps, a skip-intro setting per course, and keyboard shortcuts. **Listening mode** plays just the audio, like a podcast (it keeps going with the screen off), with a **sleep timer**. **Chromecast** casting works from Chrome and Edge.
 - **Multiple users:** everyone has their own progress, notes, bookmarks, stats, favourites and learning paths. Users can sign in with a password or with **single sign-on** (Authentik, Authelia, Keycloak, Zitadel…).
 - **Notes & bookmarks:** both are tied to a moment in the video, and you can export them as Markdown.
 - **Transcripts:** CourseHub uses `.srt`/`.vtt` files next to your videos, or creates transcripts on your server with Whisper, with optional English captions for other languages. You get captions, a transcript that follows along, and search across everything said in every lesson.
-- **AI study tools** (optional, with a local model such as Ollama): lesson summaries, quizzes, flashcards (with Anki export), "ask this course" with links to the exact moments, and caption translation into 20 languages.
+- **AI study tools** (optional, with a local model such as Ollama): lesson summaries, quizzes, flashcards (with Anki export), "ask this course" with links to the exact moments (it searches by meaning when you set an embedding model), and caption translation into 20 languages.
+- **Spaced repetition:** add flashcards to your review deck and CourseHub brings each one back just before you'd forget it (SM-2, like Anki).
+- **Daily goals & reminders:** set minutes per day and get an ntfy push at your chosen time if you haven't reached them.
 - **Attachments & code:** slides, PDFs and zips named after a lesson appear next to it. Code folders can be browsed with syntax highlighting or downloaded as a zip.
 - **Offline:** save lessons or whole courses on a phone or laptop and watch without internet. Progress syncs when you're back online.
 - **Stats, paths and motivation:** daily watch time, streaks, finish-date estimates, learning paths, printable completion certificates, and a household activity feed.
-- **For admins:** a dashboard (who's watching now, per-user activity, storage per library, background jobs), notifications to **ntfy** or **webhooks**, and a **REST API** with API keys.
+- **Household:** share notes with everyone who can open a course, discuss each lesson in comments, give **kids' profiles** a daily time limit and their own libraries, and send a **guest link** that opens one course until a date.
+- **Security:** two-factor sign-in with an authenticator app (TOTP) and recovery codes.
+- **For admins:** a dashboard (who's watching now, per-user activity, storage per library, background jobs), a **library health report** (broken files, duplicates, missing transcripts and covers), **scheduled backups** of `/config`, a **Prometheus** `/metrics` endpoint, notifications to **ntfy** or **webhooks**, and a **REST API** with API keys.
 - **Everywhere:** light and dark themes; English, German, Spanish and French; installable as an app (PWA) on phones and desktops.
 
 ## Install
@@ -125,6 +129,8 @@ Everything has a sensible default in the image. Override settings with environme
 | `CourseHub__RescanIntervalMinutes` | `30` | Rescans on a timer, in addition to watching for file changes. File watching doesn't work on SMB/NFS shares or Docker Desktop mounts. `0` turns the timer off. |
 | `CourseHub__WatchForChanges` | `true` | Watches library folders and rescans within seconds of a change. |
 | `CourseHub__CoursesRoot` | `/courses` | The folder of the main library. |
+| `CourseHub__BasePath` | – | Serve CourseHub under a path, such as `/courses` for `https://example.com/courses`. See [Reverse proxy](#reverse-proxy). |
+| `CourseHub__Metrics__Enabled` / `CourseHub__Metrics__Token` | `false` / – | Turns on Prometheus metrics at `/metrics`. With a token, scrapers must send `Authorization: Bearer <token>`. |
 | `Oidc__…` | – | Single sign-on; see [below](#single-sign-on). |
 | `ConnectionStrings__Progress` | `Data Source=/config/coursehub.db` | The SQLite database. |
 | `CourseHub__KeysFolder` | `/config/keys` | Keys that encrypt sign-in cookies. Keep them, or everyone gets signed out. |
@@ -138,6 +144,7 @@ Everything has a sensible default in the image. Override settings with environme
 config/
 ├── coursehub.db            users, progress, notes, stats, paths, settings
 ├── keys/                   sign-in cookie keys
+├── backups/                scheduled backup zips (Settings → Server backups)
 └── storage/
     ├── thumbs/             recreated automatically if deleted
     ├── transcodes/         converted videos (size-capped, recreated on demand)
@@ -146,7 +153,7 @@ config/
     └── probe-cache.json    video codec information
 ```
 
-To back up, copy the `config` folder while the container is stopped. Each user can also export their own data from **Settings → Backup**.
+CourseHub backs up the database, the keys and (optionally) the transcripts every night into `config/backups` (**Settings → Server backups**: time, how many to keep, *Back up now* and downloads). The database copy is made with SQLite's `VACUUM INTO`, so it's consistent while CourseHub runs. To restore, stop CourseHub and unzip a backup into `/config`. For off-site copies, sync `config/backups` elsewhere. Each user can also export their own data from **Settings → Backup**.
 
 ## Video compatibility & hardware acceleration
 
@@ -164,9 +171,19 @@ Pick the encoder in **Settings → Video playback**:
 | Software (libx264) | any CPU | nothing |
 | VAAPI | Intel (incl. Quick Sync) and AMD GPUs on Linux | `devices: ["/dev/dri:/dev/dri"]` and `group_add: ["video", "render"]` (or their numeric ids) |
 | NVENC | NVIDIA GPUs | install the NVIDIA Container Toolkit and add `deploy.resources.reservations.devices: [{driver: nvidia, count: all, capabilities: [gpu, video]}]` |
+| V4L2 (`h264_v4l2m2m`) | Raspberry Pi 4 | `devices: ["/dev/video11:/dev/video11"]` and `group_add: ["video"]` |
 | VideoToolbox | Macs, when running from source | nothing |
 
-If hardware conversion fails, the job's error says so; switch back to Software.
+Settings marks encoders the server's ffmpeg doesn't have as unavailable. If hardware conversion fails, the job's error says so; switch back to Software.
+
+## Raspberry Pi
+
+CourseHub runs on a **Raspberry Pi 4 or 5 with 8 GB** and a **64-bit** OS (Raspberry Pi OS 64-bit, Ubuntu Server, DietPi…); the `arm64` image is pulled automatically. 32-bit Raspberry Pi OS isn't supported (`uname -m` must say `aarch64`).
+
+- **Pi 4:** choose *Raspberry Pi 4 hardware encoder (V4L2)* in **Settings → Video playback** and pass `/dev/video11` to the container (see the table above). It is much faster than converting on the Pi's CPU.
+- **Pi 5:** it has no H.264 encoder, so conversions use the CPU. Repackaging is still quick, and most courses (MP4/H.264) never need converting at all; for the rest, turn on background conversion so it happens before anyone presses play.
+- **Whisper:** use the `base` or `small` model; CourseHub uses all four cores on a Pi.
+- Put `/config` on an SSD rather than the SD card; the database and converted videos write often.
 
 ## Transcripts
 
@@ -189,7 +206,7 @@ The AI tools use the transcripts, so transcribe a course first. They work with a
 | LM Studio, llama.cpp server, vLLM | their `/v1` address |
 | OpenAI or another cloud API | the provider's URL and an API key; transcripts are then sent to that provider |
 
-Pick a model your server has (for example `llama3.2`, `qwen2.5:7b` or `mistral-nemo`), then use **Test connection**. Larger models write better quizzes. Summaries, quizzes and flashcards are generated once per lesson and shared by everyone; **Regenerate** replaces them.
+Pick a model your server has (for example `llama3.2`, `qwen2.5:7b` or `mistral-nemo`), then use **Test connection**. For **ask this course**, also set an **embedding model** (for example `nomic-embed-text` in Ollama): CourseHub indexes the course's transcripts once and then finds passages by meaning, not just by matching words. Larger models write better quizzes. Summaries, quizzes and flashcards are generated once per lesson and shared by everyone; **Regenerate** replaces them.
 
 ## Single sign-on
 
@@ -220,6 +237,8 @@ In **Settings → Notifications**, add any number of destinations:
 
 Events: new course, course removed, transcription batch finished, and someone finished a course (only for people who share their activity).
 
+**Daily reminders** are per person: in **Settings → Daily goal & reminders**, each user sets minutes per day, a time, and their own ntfy topic. At that time they get a push if they're short of their goal or have flashcards due, with a link to what they were watching.
+
 ## REST API
 
 Create a key in **Settings → API keys** and send it as `Authorization: Bearer ch_…`. The OpenAPI description is at `/openapi/v1.json`.
@@ -240,7 +259,9 @@ The interface follows the browser language, and you can change it under **Settin
 
 ## Reverse proxy
 
-CourseHub's interface uses a live **WebSocket** connection (Blazor Server), so your proxy must forward WebSocket upgrades. Videos use HTTP range requests, which work by default. Also set `CourseHub__TrustForwardedHeaders=true`. CourseHub has to be on its own (sub)domain, such as `courses.example.com`; it can't run under a path like `/coursehub`.
+CourseHub's interface uses a live **WebSocket** connection (Blazor Server), so your proxy must forward WebSocket upgrades. Videos use HTTP range requests, which work by default. Also set `CourseHub__TrustForwardedHeaders=true`.
+
+CourseHub can have its own (sub)domain, such as `courses.example.com`, or live under a path: set `CourseHub__BasePath=/courses` and forward `/courses` to CourseHub **without stripping the prefix** (Caddy: `handle /courses* { reverse_proxy coursehub:8080 }`; Nginx: `location /courses/ { proxy_pass http://coursehub:8080; … }` with no path after the port).
 
 **Caddy**
 
@@ -279,6 +300,10 @@ In **Nginx Proxy Manager**, turn on *Websockets Support* for the proxy host.
 - Passwords are hashed with ASP.NET Core Identity's PBKDF2 hasher. After 8 failed attempts, sign-in is blocked for 15 minutes for that username and IP.
 - Changing a password or role signs that user out on every device.
 - Everything except `/health`, `/offline.html` and the sign-in pages requires an account, including video files and thumbnails, and every file checks the user's library access. The Downloads page only shows what's stored on that device.
+- **Two-factor sign-in:** each user can turn it on in **Settings → Two-factor sign-in** with any authenticator app, and gets 8 single-use recovery codes. Admins can reset it for someone who lost their phone.
+- **Kids' profiles:** in **Settings → Users**, mark someone as a kid and set minutes per day. When the time is used up, videos stop until tomorrow. Kids can't create API keys or guest links; pick their libraries as for any user.
+- **Guest links:** on a course's Overview tab, *Share with a guest* creates a link that opens only that course until it expires (1 to 90 days), with no account needed. Revoking it deletes the guest's progress too. Admins see all links in Settings.
+- **Casting** uses links signed for that one lesson and valid for 6 hours, because the Chromecast can't send your sign-in cookie. The TV must reach CourseHub's address: open CourseHub by its LAN address (not `localhost`), or set the public address in Settings.
 - API keys are stored as SHA-256 hashes and shown only once.
 - HTML lessons run their own scripts inside CourseHub, as they would in a browser. Only add HTML lessons you trust.
 - If you expose CourseHub to the internet, put it behind HTTPS (the Caddy example handles that).

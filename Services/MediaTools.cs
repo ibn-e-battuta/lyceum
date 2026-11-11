@@ -38,6 +38,51 @@ public sealed class MediaTools
         logger.LogInformation("ffmpeg: {Ffmpeg}; whisper: {Whisper}", Ffmpeg ?? "not found", Whisper ?? "not found");
     }
 
+    private HashSet<string>? _encoders;
+
+    /// <summary>Video encoders this ffmpeg build has (h264_vaapi, h264_v4l2m2m…), read once from `ffmpeg -encoders`.</summary>
+    public IReadOnlySet<string> Encoders
+    {
+        get
+        {
+            if (_encoders is not null) return _encoders;
+            var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (Ffmpeg is not null)
+            {
+                try
+                {
+                    var lines = new List<string>();
+                    // Task.Run: this getter is used while Blazor renders, and blocking on its synchronization context deadlocks.
+                    Task.Run(() => RunAsync(Ffmpeg, ["-hide_banner", "-encoders"], TimeSpan.FromSeconds(15), lines.Add)).GetAwaiter().GetResult();
+                    foreach (var l in lines)
+                    {
+                        var parts = l.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 2 && parts[0].StartsWith('V')) found.Add(parts[1]);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not list ffmpeg encoders");
+                }
+            }
+            return _encoders = found;
+        }
+    }
+
+    /// <summary>Hardware-acceleration choices (Settings value → ffmpeg encoder).</summary>
+    public static readonly (string Value, string Encoder, string Label)[] HardwareOptions =
+    [
+        ("none", "libx264", "Software (libx264) — works everywhere"),
+        ("vaapi", "h264_vaapi", "VAAPI — Intel / AMD (Linux, /dev/dri)"),
+        ("qsv", "h264_qsv", "Intel Quick Sync (QSV)"),
+        ("nvenc", "h264_nvenc", "NVIDIA NVENC"),
+        ("v4l2m2m", "h264_v4l2m2m", "Raspberry Pi 4 hardware encoder (V4L2, /dev/video11)"),
+        ("videotoolbox", "h264_videotoolbox", "Apple VideoToolbox (macOS)"),
+    ];
+
+    public bool HasEncoder(string value) =>
+        HardwareOptions.FirstOrDefault(o => o.Value == value) is { Encoder: not null } o && Encoders.Contains(o.Encoder);
+
     public string DataDir { get; }
     public string ThumbDir { get; }
     public string TranscriptDir { get; }

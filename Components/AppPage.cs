@@ -9,13 +9,19 @@ public abstract class AppPage : ComponentBase
 {
     [CascadingParameter] protected Task<AuthenticationState>? AuthState { get; set; }
     [Inject] private UserService UserService { get; set; } = default!;
+    [Inject] private CourseLibrary CourseLibrary { get; set; } = default!;
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
 
-    /// <summary>Libraries this user can see; null means all of them.</summary>
-    protected IReadOnlySet<int>? Access { get; private set; }
+    /// <summary>What this user can see; null means everything.</summary>
+    protected AccessScope? Access { get; private set; }
 
     protected int UserId { get; private set; }
     protected bool IsAdmin { get; private set; }
     protected string UserName { get; private set; } = "";
+    protected UserInfo? Me { get; set; }
+    protected bool IsKid => Me?.IsKid == true;
+    /// <summary>Signed in through a guest link: may only open one course.</summary>
+    protected bool IsGuest => Me?.IsGuest == true;
 
     /// <summary>Opening apps (VS Code, Finder…) only makes sense when the server is this Mac.</summary>
     protected static bool CanOpenLocalApps => OperatingSystem.IsMacOS();
@@ -27,6 +33,17 @@ public abstract class AppPage : ComponentBase
         UserId = user.GetUserId() ?? 0;
         IsAdmin = user.IsAdmin();
         UserName = user.Identity?.Name ?? "";
-        Access = await UserService.AllowedLibrariesAsync(UserId);
+        Me = await UserService.GetAsync(UserId);
+        // A null scope means "everything"; only an unknown user gets nothing.
+        Access = Me is null ? AccessScope.Nothing : Me.IsAdmin ? null : Me.Scope;
+    }
+
+    /// <summary>Pages other than the course itself send guests back to their course. Returns true when it redirected.</summary>
+    protected bool SendGuestToCourse()
+    {
+        if (!IsGuest) return false;
+        var course = Me?.GuestCourse is { } folder ? CourseLibrary.GetCourseByFolder(folder) : null;
+        Navigation.NavigateTo(course is null ? "login" : $"course/{course.Id}");
+        return true;
     }
 }

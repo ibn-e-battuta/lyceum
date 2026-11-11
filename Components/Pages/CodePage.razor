@@ -8,16 +8,16 @@
 
 @if (resource is not { } r)
 {
-    <div class="empty"><h1>Folder not found</h1><a href="/">Back to my courses</a></div>
+    <div class="empty"><h1>Folder not found</h1><a href="./">Back to my courses</a></div>
 }
 else
 {
     <header class="topbar player-top">
-        <a class="brand" href="/" title="My learning"><span class="logo">▶</span></a>
+        <a class="brand" href="./" title="My learning"><span class="logo">▶</span></a>
         <a class="muted hide-mobile" href="@($"course/{r.Course.Id}")">@r.Course.Title</a>
         <span class="muted hide-mobile">/</span>
         <div class="course-title">📁 @r.Folder.Name</div>
-        <a class="btn ghost small" href="@($"/code/{ResourceId}/zip")" download>⬇ Zip</a>
+        <a class="btn ghost small" href="@($"code/{ResourceId}/zip")" download>⬇ Zip</a>
         @if (CanOpenLocalApps && IsAdmin)
         {
             <button class="btn ghost small" @onclick='() => Open("vscode")'>VS Code</button>
@@ -51,7 +51,7 @@ else
             {
                 <div class="code-head">
                     <code>@selected</code>
-                    <a class="btn ghost small push" href="@($"/code/{ResourceId}/raw?path={Uri.EscapeDataString(selected)}")" download>Download</a>
+                    <a class="btn ghost small push" href="@($"code/{ResourceId}/raw?path={Uri.EscapeDataString(selected)}")" download>Download</a>
                     @if (CanOpenLocalApps && IsAdmin)
                     {
                         <button class="btn ghost small" @onclick='() => Open("vscode", selected)'>Open in VS Code</button>

@@ -76,7 +76,7 @@ export function scrollLessonIntoView(id) {
 /** Asks the server to open a resource folder in VS Code / Rider / Finder. Returns an error message or null. */
 export async function openWith(app, resourceId, path) {
   try {
-    const r = await fetch(`/api/open/${app}/${resourceId}?path=${encodeURIComponent(path || "")}`, {
+    const r = await fetch(`api/open/${app}/${resourceId}?path=${encodeURIComponent(path || "")}`, {
       method: "POST", headers: { "X-CourseHub": "1" },
     });
     if (r.ok) return null;
@@ -89,7 +89,7 @@ function setCaptions(video, on) {
   for (const t of video.textTracks) t.mode = on ? "showing" : "hidden";
 }
 
-export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntro) {
+export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntro, meta) {
   detach();
   if (!video) return;
 
@@ -105,7 +105,9 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
     dotnet.invokeMethodAsync("ReportPosition", lessonId, video.currentTime, video.duration, w).catch(() => {});
   };
 
-  const s = { video, viewer, dotnet, lessonId, skipIntro: skipIntro || 0 };
+  const s = { video, viewer, dotnet, lessonId, skipIntro: skipIntro || 0, locked: false };
+  const isVideo = video.tagName === "VIDEO";
+  setupMediaSession(video, dotnet, meta);
 
   const handlers = {
     loadedmetadata: () => {
@@ -158,8 +160,8 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
       case ">": speed(0.1); break;
       case "<": speed(-0.1); break;
       case "m": case "M": video.muted = !video.muted; toast(video.muted ? "Muted" : "Unmuted"); break;
-      case "f": case "F": document.fullscreenElement ? document.exitFullscreen() : video.requestFullscreen?.(); break;
-      case "p": case "P": togglePip(); break;
+      case "f": case "F": if (!isVideo) return; document.fullscreenElement ? document.exitFullscreen() : video.requestFullscreen?.(); break;
+      case "p": case "P": if (!isVideo) return; togglePip(); break;
       case "c": case "C": {
         if (video.textTracks.length === 0) { toast("No captions for this lesson"); break; }
         const on = !store.get("coursehub.captions", false);
@@ -185,7 +187,7 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
 
   // Mini player: when the video scrolls out of view while playing, pin it to the corner.
   let observer = null;
-  const wrap = viewer?.querySelector(".video-wrap");
+  const wrap = isVideo ? viewer?.querySelector(".video-wrap") : null;
   if (viewer && wrap && "IntersectionObserver" in window) {
     observer = new IntersectionObserver(([entry]) => {
       const mini = entry.intersectionRatio < 0.35 && !video.paused;
@@ -201,6 +203,47 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
 
   Object.assign(s, { handlers, onKey, onHide, report, observer, wrap });
   state = s;
+}
+
+// ---------- lock-screen / headset controls ----------
+
+function setupMediaSession(media, dotnet, meta) {
+  if (!("mediaSession" in navigator) || !meta) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: meta.title, artist: meta.course, album: "CourseHub",
+      artwork: meta.artwork ? [{ src: meta.artwork, sizes: "480x270", type: "image/jpeg" }] : [],
+    });
+    const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* unsupported action */ } };
+    set("play", () => media.play());
+    set("pause", () => media.pause());
+    set("seekbackward", (d) => { media.currentTime = Math.max(0, media.currentTime - (d.seekOffset || 10)); });
+    set("seekforward", (d) => { media.currentTime = Math.min(media.duration || 0, media.currentTime + (d.seekOffset || 10)); });
+    set("seekto", (d) => { if (d.seekTime != null) media.currentTime = d.seekTime; });
+    set("nexttrack", meta.hasNext ? () => dotnet.invokeMethodAsync("Next").catch(() => {}) : null);
+    set("previoustrack", meta.hasPrev ? () => dotnet.invokeMethodAsync("Previous").catch(() => {}) : null);
+  } catch { /* older browsers */ }
+}
+
+/** Kids' daily limit reached: stop and refuse to play until the page is reloaded tomorrow. */
+export function lock() {
+  if (!state) return;
+  state.locked = true;
+  state.video.pause();
+  state.video.addEventListener("play", () => state?.locked && state.video.pause());
+}
+
+/** Sleep timer: lower the volume over a few seconds, then pause and restore the volume. */
+export function fadeOutAndPause(seconds) {
+  const media = state?.video;
+  if (!media || media.paused) return;
+  const start = media.volume, steps = Math.max(1, Math.round((seconds || 8) * 10));
+  let i = 0;
+  const t = setInterval(() => {
+    i++;
+    media.volume = Math.max(0, start * (1 - i / steps));
+    if (i >= steps) { clearInterval(t); media.pause(); media.volume = start; toast("⏾"); }
+  }, 100);
 }
 
 export function detach() {

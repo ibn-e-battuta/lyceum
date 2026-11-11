@@ -37,7 +37,7 @@ public sealed class ActivityService(IDbContextFactory<ProgressDb> dbFactory, Cou
     /// Recent activity from everyone who shares it (plus the viewer), limited to courses the viewer can see.
     /// Lesson completions are grouped per person, course and day.
     /// </summary>
-    public async Task<List<FeedItem>> FeedAsync(int viewerId, IReadOnlySet<int>? viewerAccess, int days = 14, int limit = 30)
+    public async Task<List<FeedItem>> FeedAsync(int viewerId, AccessScope? viewerAccess, int days = 14, int limit = 30)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
         var since = DateTime.UtcNow.AddDays(-days);

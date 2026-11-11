@@ -12,9 +12,9 @@ public sealed record Lesson(
     double? DurationSeconds,
     string? SubtitlePath)
 {
-    public string MediaUrl => $"/media/{Id}";
-    public string ThumbUrl => $"/thumb/{Id}";
-    public string SubtitleUrl => $"/subs/{Id}.vtt";
+    public string MediaUrl => AppPaths.Url($"/media/{Id}");
+    public string ThumbUrl => AppPaths.Url($"/thumb/{Id}");
+    public string SubtitleUrl => AppPaths.Url($"/subs/{Id}.vtt");
     /// <summary>Slides, PDFs, zips… whose file names start with this lesson's name.</summary>
     public IReadOnlyList<Attachment> Attachments { get; init; } = [];
 }
@@ -22,9 +22,20 @@ public sealed record Lesson(
 /// <summary>A downloadable file that belongs to a lesson or section.</summary>
 public sealed record Attachment(string Id, string Name, string FullPath, long SizeBytes)
 {
-    public string Url => $"/attachment/{Id}";
+    public string Url => AppPaths.Url($"/attachment/{Id}");
     public string Extension => Path.GetExtension(Name).TrimStart('.').ToLowerInvariant();
     public bool OpensInBrowser => Extension is "pdf" or "txt" or "md" or "png" or "jpg" or "jpeg" or "gif" or "svg" or "webp";
+}
+
+/// <summary>
+/// What a user may see: a set of libraries (null = all) and, for guest links, a single course.
+/// A null <see cref="AccessScope"/> means "everything" (admins and unrestricted users).
+/// </summary>
+public sealed record AccessScope(IReadOnlySet<int>? Libraries, string? OnlyCourse)
+{
+    public static readonly AccessScope Nothing = new(new HashSet<int>(), null);
+    public bool AllowsLibrary(int id) => Libraries is null || Libraries.Contains(id);
+    public bool Allows(Course c) => AllowsLibrary(c.LibraryId) && (OnlyCourse is null || OnlyCourse == c.FolderName);
 }
 
 /// <summary>A folder of courses. Library #1 comes from configuration; admins can add more.</summary>
@@ -62,7 +73,9 @@ public sealed record Course(
     public int LessonCount => Sections.Sum(s => s.Lessons.Count);
     public int VideoCount => AllLessons.Count(l => l.Kind == LessonKind.Video);
     public double TotalSeconds => Sections.Sum(s => s.TotalSeconds);
-    public string CoverUrl => $"/cover/{Id}";
+    public string CoverUrl => AppPaths.Url($"/cover/{Id}?v={CoverVersion}");
+    /// <summary>Seconds-since-epoch-ish stamp of the cover file, used to bust browser caches.</summary>
+    public long CoverVersion { get; init; }
     public int LibraryId { get; init; } = 1;
     /// <summary>Total size of lessons and attachments on disk.</summary>
     public long TotalBytes { get; init; }

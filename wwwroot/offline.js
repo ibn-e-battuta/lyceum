@@ -1,7 +1,9 @@
 // Offline downloads: lessons are stored with the Cache API (streamed straight to disk, not memory) and
 // served back by the service worker (sw.js), including byte ranges so seeking works.
 const CACHE = "coursehub-offline-v1";
-const INDEX = "/__offline/index.json";
+// Paths are resolved against the page's base URL, so CourseHub also works under a sub-path (example.com/courses/).
+const at = (p) => new URL(p, document.baseURI).pathname;
+const INDEX = at("__offline/index.json");
 const QUEUE = "coursehub.offline.progress";
 
 async function cache() { return caches.open(CACHE); }
@@ -34,7 +36,7 @@ async function download(meta, onProgress) {
   const type = res.headers.get("Content-Type") || "video/mp4";
   // Split the stream: one copy goes into the cache, the other only counts bytes for the progress bar.
   const [toCache, toCount] = res.body.tee();
-  const saving = (await cache()).put(`/offline-media/${meta.id}`,
+  const saving = (await cache()).put(at(`offline-media/${meta.id}`),
     new Response(toCache, { headers: { "Content-Type": type, ...(total ? { "Content-Length": String(total) } : {}) } }));
   const reader = toCount.getReader();
   let received = 0, lastPct = -1;
@@ -48,7 +50,7 @@ async function download(meta, onProgress) {
   await saving;
   try {
     const thumb = await fetch(meta.thumb, { credentials: "same-origin" });
-    if (thumb.ok) await (await cache()).put(`/offline-thumb/${meta.id}`, thumb);
+    if (thumb.ok) await (await cache()).put(at(`offline-thumb/${meta.id}`), thumb);
   } catch { /* thumbnails are optional */ }
   const index = await readIndex();
   index[meta.id] = { ...meta, size: received, savedAt: new Date().toISOString() };
@@ -66,7 +68,7 @@ export async function saveLesson(meta, dotnet) {
     await download(meta, (pct) => dotnet?.invokeMethodAsync("OnOfflineProgress", meta.id, pct, false, null));
     dotnet?.invokeMethodAsync("OnOfflineProgress", meta.id, 100, true, null);
   } catch (e) {
-    await (await cache()).delete(`/offline-media/${meta.id}`);
+    await (await cache()).delete(at(`offline-media/${meta.id}`));
     dotnet?.invokeMethodAsync("OnOfflineProgress", meta.id, 0, false, quotaMessage(e));
   }
 }
@@ -95,8 +97,8 @@ function quotaMessage(e) {
 
 export async function removeLesson(id) {
   const c = await cache();
-  await c.delete(`/offline-media/${id}`);
-  await c.delete(`/offline-thumb/${id}`);
+  await c.delete(at(`offline-media/${id}`));
+  await c.delete(at(`offline-thumb/${id}`));
   const index = await readIndex();
   delete index[id];
   await writeIndex(index);
@@ -124,7 +126,7 @@ export async function flushProgress() {
   const left = [];
   for (const p of q) {
     try {
-      const r = await fetch(`/api/v1/lessons/${p.id}/progress`, {
+      const r = await fetch(`api/v1/lessons/${p.id}/progress`, {
         method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ position: p.position, duration: p.duration, completed: p.completed || null }),
       });

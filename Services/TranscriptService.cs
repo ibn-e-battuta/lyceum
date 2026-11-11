@@ -183,7 +183,7 @@ public sealed partial class TranscriptService(
 
     // ---------- search ----------
 
-    public async Task<List<TranscriptHit>> SearchAsync(string query, IReadOnlySet<int>? allowedLibraries, int limit = 40)
+    public async Task<List<TranscriptHit>> SearchAsync(string query, AccessScope? allowedLibraries, int limit = 40)
     {
         query = query.Trim();
         if (query.Length < 3) return [];
@@ -388,7 +388,8 @@ public sealed partial class TranscriptService(
     private async Task RunWhisperAsync(Lesson lesson, string wav, string outBase, string language, bool translate,
         int fromPercent, int toPercent, Action<string> onDetected, CancellationToken ct)
     {
-        var threads = Math.Clamp(Environment.ProcessorCount - 2, 2, 8);
+        // Small boards (Raspberry Pi: 4 cores) use every core; bigger machines keep two free for everything else.
+        var threads = Math.Clamp(Environment.ProcessorCount <= 4 ? Environment.ProcessorCount : Environment.ProcessorCount - 2, 1, 8);
         var args = new List<string> { "-m", tools.ModelPath, "-f", wav, "-l", language, "-t", threads.ToString(), "-ovtt", "-of", outBase, "-pp" };
         if (translate) args.Add("-tr");
         var (code, err) = await MediaTools.RunAsync(tools.Whisper!, args, TimeSpan.FromHours(3), line =>

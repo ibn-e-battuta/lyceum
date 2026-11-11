@@ -10,19 +10,25 @@
 @inject MediaProbe Probe
 @inject Transcoder Transcoder
 @inject AiService Ai
+@inject WatchTimeService WatchTime
+@inject CommentService Comments
+@inject ReviewService Reviews
+@inject GuestService Guests
+@inject CastTokenService CastTokens
+@inject AppSettingsService AppSettings
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 
 @if (course is null || lesson is null)
 {
-    <div class="empty"><h1>@L["Course not found"]</h1><a href="/">@L["Back to my courses"]</a></div>
+    <div class="empty"><h1>@L["Course not found"]</h1><a href="./">@L["Back to my courses"]</a></div>
 }
 else
 {
 <PageTitle>@lesson.Title · @course.Title</PageTitle>
 
 <header class="topbar player-top">
-    <a class="brand" href="/" title="@L["My learning"]"><span class="logo">▶</span></a>
+    <a class="brand" href="./" title="@L["My learning"]"><span class="logo">▶</span></a>
     <div class="course-title">@course.Title</div>
     <button class="icon-btn @(meta.Favorite ? "on" : "")" title="@(meta.Favorite ? L["Remove from favourites"] : L["Add to favourites"])" @onclick="ToggleFavorite">@(meta.Favorite ? "★" : "☆")</button>
     <div class="top-progress" title="@L["{0} of {1} lessons complete", stats.Completed, stats.Total]">
@@ -40,8 +46,27 @@ else
         <div class="viewer @(lesson.Kind == LessonKind.Article ? "article" : "")" @ref="viewerRef">
             @if (lesson.Kind == LessonKind.Video)
             {
-                <div class="video-wrap">
-                    @if (videoSrc is not null)
+                <div class="video-wrap @(AudioActive ? "audio" : "")">
+                    @if (timeUp)
+                    {
+                        <div class="preparing">
+                            <div class="big-emoji">⏳</div>
+                            <strong>@L["That's all for today"]</strong>
+                            <div class="muted tiny">@L["You've used today's {0} minutes. See you tomorrow!", Me?.DailyLimitMinutes ?? 0]</div>
+                        </div>
+                    }
+                    else if (AudioActive)
+                    {
+                        <div class="audio-art" style="background-image:url('@(course.CoverPath is not null ? course.CoverUrl : lesson.ThumbUrl)')">
+                            <div class="audio-meta">
+                                <div class="tiny">🎧 @L["Listening mode"]</div>
+                                <strong>@lesson.Title</strong>
+                                <div class="tiny">@course.Title</div>
+                            </div>
+                        </div>
+                        <audio @key="AttachKey" @ref="videoRef" src="@MediaSrc" controls preload="auto"></audio>
+                    }
+                    else if (videoSrc is not null)
                     {
                         <video @key="AttachKey" @ref="videoRef" src="@videoSrc" controls playsinline preload="auto">
                             @foreach (var t in Transcripts.Tracks(lesson))
@@ -138,7 +163,27 @@ else
             @if (lesson.Kind == LessonKind.Video)
             {
                 <button class="btn ghost" title="@L["Bookmark this moment (B)"]" @onclick="AddBookmarkNow">🔖 @L["Bookmark"]</button>
-                <button class="btn ghost hide-mobile" title="@L["Picture-in-picture (P)"]" @onclick="TogglePip">⧉ PiP</button>
+                <button class="btn ghost hide-mobile" title="@L["Picture-in-picture (P)"]" @onclick="TogglePip" disabled="@AudioActive">⧉ PiP</button>
+                <button class="btn @(audioMode ? "done" : "ghost")" title="@L["Audio only, like a podcast; keeps playing with the screen off"]" @onclick="ToggleAudio" disabled="@(videoSrc is null || media?.AudioCodec is null && media is not null)">
+                    🎧 @(audioMode && !AudioActive ? L["Preparing audio…"] : L["Listen"])
+                </button>
+                <label class="speed" title="@L["Pause playback after a while"]">
+                    ⏾
+                    <select @bind="sleepChoice" @bind:after="ApplySleep">
+                        <option value="0">@L["Sleep timer"]</option>
+                        @foreach (var m in new[] { 10, 15, 30, 45, 60, 90 }) { <option value="@m">@L["{0} min", m]</option> }
+                        <option value="-1">@L["End of this lesson"]</option>
+                    </select>
+                    @if (sleepAt is { } at) { <span class="tiny muted">@at.ToLocalTime().ToString("HH:mm")</span> }
+                </label>
+                @if (castAvailable)
+                {
+                    <button class="btn @(casting ? "done" : "ghost")" title="@L["Play on a Chromecast or Google TV"]" @onclick="ToggleCast" disabled="@(videoSrc is null)">📺 @(casting ? L["Casting"] : L["Cast"])</button>
+                }
+                @if (kidRemaining is { } left && !timeUp)
+                {
+                    <span class="kid-timer" title="@L["Time left today"]">⏳ @L["{0} min left today", (int)Math.Ceiling(left / 60)]</span>
+                }
                 <button class="btn ghost" title="@L["Keep a copy on this device to watch without internet"]" disabled="@(videoSrc is null || offlineProgress is not null)" @onclick="ToggleOffline">
                     @(offlineSaved ? "✓ " + L["Saved offline"] : offlineProgress is { } op ? L["Saving… {0}%", op] : "⬇ " + L["Save offline"])
                 </button>
@@ -161,9 +206,10 @@ else
                 <button class="btn ghost" @onclick='() => SetTab("Resources")'>📎 @lesson.Attachments.Count</button>
             }
         </div>
+        @if (castError is not null) { <p class="error tiny cast-error">@castError</p> }
 
         <nav class="tabs">
-            @foreach (var t in TabNames.Where(t => t != "Chapters" || Chapters.Count > 0))
+            @foreach (var t in TabNames.Where(t => (t != "Chapters" || Chapters.Count > 0) && (t != "Discussion" || !IsGuest)))
             {
                 <button class="@(tab == t ? "active" : "")" @onclick="() => SetTab(t)">
                     @L[t]
@@ -181,6 +227,7 @@ else
                 case "Chapters": @ChaptersTab() break;
                 case "Transcript": @TranscriptTab() break;
                 case "Study": @StudyTab() break;
+                case "Discussion": @DiscussionTab() break;
                 case "Resources": @ResourcesTab() break;
             }
         </div>
@@ -263,7 +310,7 @@ else
     [SupplyParameterFromQuery(Name = "t")] public double? StartAt { get; set; }
 
     private static readonly double[] Rates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-    private static readonly string[] TabNames = ["Overview", "Notes", "Bookmarks", "Chapters", "Transcript", "Study", "Resources"];
+    private static readonly string[] TabNames = ["Overview", "Notes", "Bookmarks", "Chapters", "Transcript", "Study", "Discussion", "Resources"];
 
     private Course? course;
     private Lesson? lesson;
@@ -296,9 +343,34 @@ else
     private bool deciding;
     private string? playbackError;
     private string? decidedFor;
-    private string AttachKey => $"{lesson?.Id}|{videoSrc}";
+    private string AttachKey => $"{lesson?.Id}|{MediaSrc}";
     private PrepareJob? PrepJob => lesson is null || variant is null or PlaybackVariant.Direct ? null : Transcoder.JobFor(lesson, variant.Value);
     private IReadOnlyList<Chapter> Chapters => media?.Chapters ?? [];
+
+    // audio mode, sleep timer, casting, kids' limit
+    private bool audioMode;
+    private double? resumeOverride;
+    private int sleepChoice;
+    private DateTime? sleepAt;
+    private bool sleepAfterLesson;
+    private CancellationTokenSource? sleepCts;
+    private IJSObjectReference? cast;
+    private bool castAvailable, casting;
+    private string? castError;
+    private double? kidRemaining;
+    private bool timeUp;
+    private string? AudioUrl => lesson is not null && Transcoder.PreparedFile(lesson, PlaybackVariant.Audio) is not null ? $"{lesson.MediaUrl}?v=audio" : null;
+    /// <summary>Listening mode only switches once the audio file is ready; until then the video keeps playing.</summary>
+    private bool AudioActive => audioMode && AudioUrl is not null && !timeUp;
+    private string? MediaSrc => AudioActive ? AudioUrl : videoSrc;
+
+    // household
+    private List<CommentView> comments = [];
+    private List<SharedNoteView> sharedNotes = [];
+    private List<GuestLinkInfo> guestLinks = [];
+    private string guestLabel = "";
+    private int guestDays = 7;
+    private string? newGuestUrl;
 
     // offline
     private bool offlineSaved;
@@ -314,6 +386,7 @@ else
         "Bookmarks" => notes.Count(n => n.Kind == NoteKind.Bookmark),
         "Chapters" => Chapters.Count,
         "Resources" => course is null || lesson is null ? null : course.Resources.Count + lesson.Attachments.Count + (CurrentSection?.Files.Count ?? 0),
+        "Discussion" => comments.Count,
         _ => null,
     };
 
@@ -322,6 +395,7 @@ else
         Library.Changed += OnLibraryChanged;
         Transcripts.Changed += OnServiceChanged;
         Transcoder.Changed += OnTranscoderChanged;
+        Transcoder.Changed += OnAudioMaybeReady;
     }
 
     protected override async Task OnInitializedAsync() => aiEnabled = await Ai.IsEnabledAsync();
@@ -337,6 +411,14 @@ else
         StateHasChanged();
     });
 
+    private void OnAudioMaybeReady() => InvokeAsync(async () =>
+    {
+        // The listening-mode file just finished: continue from where the video is.
+        if (audioMode && AudioUrl is not null && attachedKey != AttachKey && module is not null)
+            resumeOverride = await module.InvokeAsync<double>("getTime");
+        StateHasChanged();
+    });
+
     protected override async Task OnParametersSetAsync()
     {
         await EnsureUserAsync();
@@ -349,6 +431,9 @@ else
         {
             CancelNote();
             ResetStudy();
+            castError = null;
+            comments = IsGuest ? [] : await Comments.ForLessonAsync(lesson);
+            if (audioMode && lesson.Kind == LessonKind.Video) Transcoder.Enqueue(lesson, PlaybackVariant.Audio);
             media = null;
             videoSrc = null;
             variant = null;
@@ -358,6 +443,12 @@ else
             var sectionIndex = course.Sections.ToList().FindIndex(s => s.Lessons.Contains(lesson));
             if (sectionIndex >= 0) openSections.Add(sectionIndex);
             if (tab == "Study") await LoadStudyAsync();
+        }
+
+        if (Me is { IsKid: true } kid)
+        {
+            kidRemaining = await WatchTime.RemainingAsync(kid);
+            timeUp = kidRemaining is <= 0;
         }
 
         // Opening a reading lesson counts as "touched" so "Continue learning" finds it.
@@ -379,6 +470,11 @@ else
         meta = await UserData.MetaAsync(UserId, course);
         notes = await UserData.NotesForCourseAsync(UserId, course);
         paths = await UserData.PathsAsync(UserId);
+        if (!IsGuest)
+        {
+            sharedNotes = await Comments.SharedNotesAsync(course, UserId);
+            if (!IsKid) guestLinks = await Guests.ListAsync(UserId, IsAdmin, course.FolderName);
+        }
 
         lesson = LessonId is null
             ? stats.ResumeLesson ?? lessons.FirstOrDefault()
@@ -402,7 +498,16 @@ else
             var savedTab = await module.InvokeAsync<string?>("getPref", "coursehub.tab", "Overview");
             tab = savedTab is not null && TabNames.Contains(savedTab) ? savedTab : "Overview";
             if (tab == "Study") await LoadStudyAsync();
+            if (tab == "Discussion" && IsGuest) tab = "Overview";
+            audioMode = await module.InvokeAsync<bool>("getPref", "coursehub.audio", false);
+            if (audioMode && lesson?.Kind == LessonKind.Video) Transcoder.Enqueue(lesson, PlaybackVariant.Audio);
             await offline.InvokeVoidAsync("flushProgress");
+            try
+            {
+                cast = await JS.InvokeAsync<IJSObjectReference>("import", "./cast.js");
+                await cast.InvokeVoidAsync("init", selfRef);
+            }
+            catch (JSException) { /* casting is optional */ }
             StateHasChanged();
         }
         if (module is null || lesson is null) return;
@@ -414,11 +519,16 @@ else
             var newLesson = attachedKey?.Split('|')[0] != lesson.Id;
             attachedKey = AttachKey;
             if (newLesson) await module.InvokeVoidAsync("scrollLessonIntoView", $"l-{lesson.Id}");
-            if (lesson.Kind == LessonKind.Video && videoSrc is not null)
+            if (lesson.Kind == LessonKind.Video && MediaSrc is not null && !timeUp)
             {
                 var p = progress.GetValueOrDefault(lesson.RelativePath);
-                var resumeAt = StartAt ?? (p is { Completed: false } ? p.PositionSeconds : 0);
-                await module.InvokeVoidAsync("attach", videoRef, viewerRef, selfRef, lesson.Id, resumeAt, playbackRate, meta.SkipIntroSeconds);
+                var resumeAt = resumeOverride ?? StartAt ?? (p is { Completed: false } ? p.PositionSeconds : 0);
+                resumeOverride = null;
+                await module.InvokeVoidAsync("attach", videoRef, viewerRef, selfRef, lesson.Id, resumeAt, playbackRate, meta.SkipIntroSeconds, new
+                {
+                    title = lesson.Title, course = course!.Title, artwork = new Uri(new Uri(Nav.BaseUri), course.CoverPath is not null ? course.CoverUrl : lesson.ThumbUrl).ToString(),
+                    hasNext = nextLesson is not null, hasPrev = prevLesson is not null,
+                });
                 offlineSaved = offline is not null && await offline.InvokeAsync<bool>("isSaved", lesson.Id);
                 StateHasChanged();
             }
@@ -502,7 +612,7 @@ else
                 </div>
                 @if (stats.Total > 0 && stats.Completed == stats.Total)
                 {
-                    <a class="certificate-link" href="@($"/certificate/{course.Id}")">🎓 @L["You finished this course — view your certificate"]</a>
+                    <a class="certificate-link" href="@($"certificate/{course.Id}")">🎓 @L["You finished this course — view your certificate"]</a>
                 }
 
                 <h3>@L["Keyboard shortcuts"]</h3>
@@ -546,7 +656,7 @@ else
                     }
                     else
                     {
-                        <a class="tiny accent" href="/paths">@L["Create a learning path"] →</a>
+                        <a class="tiny accent" href="paths">@L["Create a learning path"] →</a>
                     }
                 </div>
 
@@ -569,6 +679,36 @@ else
                                 <button class="btn ghost small" @onclick="() => manifest = null">@L["Cancel"]</button>
                             </div>
                             @if (manifestError is not null) { <div class="error tiny">@manifestError</div> }
+                        }
+                    </div>
+                }
+
+                @if (!IsGuest && !IsKid)
+                {
+                    <div class="panel">
+                        <h3>🔗 @L["Share with a guest"]</h3>
+                        <p class="muted tiny">@L["Anyone with the link can watch this course (nothing else) until it expires — no account needed."]</p>
+                        <div class="row">
+                            <input placeholder="@L["Who is it for? e.g. Alex"]" @bind="guestLabel" />
+                            <select @bind="guestDays">
+                                <option value="1">@L["1 day"]</option>
+                                <option value="7">@L["7 days"]</option>
+                                <option value="30">@L["30 days"]</option>
+                                <option value="90">@L["90 days"]</option>
+                            </select>
+                            <button class="btn ghost small" @onclick="CreateGuestLink">@L["Create link"]</button>
+                        </div>
+                        @if (newGuestUrl is not null)
+                        {
+                            <p class="good tiny">@L["Copy this link now — it won't be shown again:"]</p>
+                            <div class="api-key">@newGuestUrl</div>
+                        }
+                        @foreach (var g in guestLinks)
+                        {
+                            <div class="job">
+                                <span class="job-title">@g.Label <span class="muted tiny">· @(g.Expired ? L["expired"] : L["until {0}", g.ExpiresAt.ToLocalTime().ToString("d MMM")]) · @L["{0} visits", g.Visits]</span></span>
+                                <button class="icon-btn" title="@L["Revoke"]" @onclick="() => RevokeGuest(g)">🗑</button>
+                            </div>
                         }
                     </div>
                 }
@@ -625,7 +765,7 @@ else
             <div class="notes-filter">
                 <label class="toggle"><input type="radio" name="scope" checked="@(!notesAllLessons)" @onchange="() => notesAllLessons = false" /> @L["This lesson"]</label>
                 <label class="toggle"><input type="radio" name="scope" checked="@notesAllLessons" @onchange="() => notesAllLessons = true" /> @L["All lessons"]</label>
-                <a class="tiny accent push" href="@($"/api/notes.md?course={course!.Id}")" download>@L["Export as Markdown"]</a>
+                <a class="tiny accent push" href="@($"api/notes.md?course={course!.Id}")" download>@L["Export as Markdown"]</a>
             </div>
 
             @if (list.Count == 0)
@@ -653,11 +793,74 @@ else
                         }
                     </div>
                     <div class="note-actions">
+                        @if (!IsGuest)
+                        {
+                            <button class="icon-btn @(n.Shared ? "on" : "")" title="@(n.Shared ? L["Shared with the household — click to make private"] : L["Private — click to share with the household"])" @onclick="() => ToggleShare(n)">@(n.Shared ? "👥" : "🔒")</button>
+                        }
                         <button class="icon-btn" title="@L["Edit"]" @onclick="() => { editingNote = n.Id; editingText = n.Text; }">✎</button>
                         <button class="icon-btn" title="@L["Delete"]" @onclick="() => DeleteNote(n)">🗑</button>
                     </div>
                 </div>
             }
+
+            @{ var others = sharedNotes.Where(n => n.Kind == kind && (notesAllLessons || n.LessonPath == lesson!.RelativePath)).ToList(); }
+            @if (others.Count > 0)
+            {
+                <h3 class="res-head">👥 @L["Shared by your household"]</h3>
+                @foreach (var n in others)
+                {
+                    var nl = Library.FindByPath(n.LessonPath)?.Lesson;
+                    <div class="note shared">
+                        <button class="stamp" @onclick="() => JumpToShared(n)">@(nl?.Kind == LessonKind.Video ? Format.Clock(Math.Max(n.Seconds, 0.5)) : "📄")</button>
+                        <div class="note-body">
+                            <div class="muted tiny">@n.Author@(notesAllLessons ? " · " + nl?.Title : "")</div>
+                            <div class="note-text">@(string.IsNullOrWhiteSpace(n.Text) ? L["Bookmark"] : n.Text)</div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    };
+
+    private string newComment = "";
+    private bool commentAtTime = true;
+
+    private RenderFragment DiscussionTab() => __builder =>
+    {
+        <div class="notes discussion">
+            <p class="muted tiny">@L["Questions and thoughts about this lesson, visible to everyone in the household who can open this course."]</p>
+            @foreach (var c in comments)
+            {
+                <div class="note">
+                    @if (c.Seconds is { } sec && lesson!.Kind == LessonKind.Video)
+                    {
+                        <button class="stamp" @onclick="() => Seek(sec)">@Format.Clock(Math.Max(sec, 0.5))</button>
+                    }
+                    else
+                    {
+                        <span class="avatar">@(c.Author.Length > 0 ? char.ToUpperInvariant(c.Author[0]) : '?')</span>
+                    }
+                    <div class="note-body">
+                        <div class="muted tiny"><strong>@c.Author</strong> · @Format.Ago(c.CreatedAt)</div>
+                        <div class="note-text">@c.Text</div>
+                    </div>
+                    @if (c.UserId == UserId || IsAdmin)
+                    {
+                        <div class="note-actions"><button class="icon-btn" title="@L["Delete"]" @onclick="() => DeleteComment(c)">🗑</button></div>
+                    }
+                </div>
+            }
+            @if (comments.Count == 0) { <p class="muted">@L["No comments yet. Start the conversation!"]</p> }
+            <div class="note-editor">
+                <textarea rows="3" maxlength="2000" placeholder="@L["Write a comment…"]" @bind="newComment" @bind:event="oninput"></textarea>
+                <div class="row">
+                    @if (lesson!.Kind == LessonKind.Video)
+                    {
+                        <label class="toggle tiny"><input type="checkbox" @bind="commentAtTime" /> @L["Link to the current moment"]</label>
+                    }
+                    <button class="btn primary small push" disabled="@string.IsNullOrWhiteSpace(newComment)" @onclick="PostComment">@L["Post"]</button>
+                </div>
+            </div>
         </div>
     };
 
@@ -825,7 +1028,7 @@ else
             <div class="panel">
                 <h3>@L["AI study tools are off"]</h3>
                 <p class="muted">@L["Summaries, quizzes, flashcards and course Q&A use a local AI model (for example Ollama) through the lesson transcripts."]</p>
-                @if (IsAdmin) { <a class="btn ghost small" href="/settings#ai">@L["Set up AI in Settings"]</a> }
+                @if (IsAdmin) { <a class="btn ghost small" href="settings#ai">@L["Set up AI in Settings"]</a> }
                 else { <p class="muted tiny">@L["Ask an admin to turn them on."]</p> }
             </div>
             return;
@@ -916,7 +1119,8 @@ else
                 <section class="panel">
                     <div class="study-head">
                         <h3>🃏 @L["Flashcards"]</h3>
-                        @if (cards is not null) { <a class="btn ghost small" href="@($"/api/flashcards/{lesson.Id}.txt")" download>@L["Export for Anki"]</a> }
+                        @if (cards is not null && !IsGuest) { <button class="btn ghost small" @onclick="AddCardsToDeck">➕ @L["Add to my review deck"]</button> }
+                        @if (cards is not null) { <a class="btn ghost small" href="@($"api/flashcards/{lesson.Id}.txt")" download>@L["Export for Anki"]</a> }
                         <button class="btn ghost small" disabled="@(studyBusy is not null)" @onclick='() => RunStudy("flashcards", regenerate: cards is not null)'>
                             @(studyBusy == "flashcards" ? L["Making cards…"] : cards is null ? L["Make flashcards"] : L["New cards"])
                         </button>
@@ -1040,8 +1244,8 @@ else
                             <div class="muted tiny">@r.RelativePath</div>
                         </div>
                         <div class="row">
-                            <a class="btn ghost small" href="@($"/code/{r.Id}")">@L["Browse code"]</a>
-                            <a class="btn ghost small" href="@($"/code/{r.Id}/zip")" download>⬇ Zip</a>
+                            <a class="btn ghost small" href="@($"code/{r.Id}")">@L["Browse code"]</a>
+                            <a class="btn ghost small" href="@($"code/{r.Id}/zip")" download>⬇ Zip</a>
                             @if (CanOpenLocalApps && IsAdmin)
                             {
                                 <button class="btn ghost small" @onclick='() => Open("vscode", r)'>VS Code</button>
@@ -1116,8 +1320,26 @@ else
         var wasDone = IsDone(target);
         progress[target.RelativePath] = await ProgressService.SavePositionAsync(UserId, course, target, position, duration, watched);
         if (wasDone != IsDone(target)) stats = ProgressService.Stats(course, progress);
+        if (Me is { IsKid: true } kid)
+        {
+            kidRemaining = await WatchTime.RemainingAsync(kid);
+            if (kidRemaining is <= 0 && !timeUp)
+            {
+                timeUp = true;
+                if (module is not null) await module.InvokeVoidAsync("lock");
+            }
+        }
         await InvokeAsync(StateHasChanged);
     }
+
+    [JSInvokable]
+    public Task Previous() => InvokeAsync(GoPrev);
+
+    [JSInvokable]
+    public Task OnCastAvailable(bool available) => InvokeAsync(() => { castAvailable = available; StateHasChanged(); });
+
+    [JSInvokable]
+    public Task OnCastState(bool active, string? error) => InvokeAsync(() => { casting = active; castError = error; StateHasChanged(); });
 
     [JSInvokable]
     public async Task OnEnded(string lessonId)
@@ -1126,7 +1348,12 @@ else
         if (course is null || target is null) return;
         progress[target.RelativePath] = await ProgressService.SetCompletedAsync(UserId, course, target, true);
         stats = ProgressService.Stats(course, progress);
-        if (autoplay && nextLesson is not null && target.Id == lesson?.Id) _ = RunCountdown();
+        if (sleepAfterLesson)
+        {
+            sleepAfterLesson = false;
+            sleepChoice = 0;
+        }
+        else if (autoplay && nextLesson is not null && target.Id == lesson?.Id) _ = RunCountdown();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -1257,6 +1484,126 @@ else
         if (course is null || lesson is null || string.IsNullOrWhiteSpace(newNoteText)) return;
         notes.Add(await UserData.AddNoteAsync(UserId, course, lesson, NoteKind.Note, newNoteAt ?? 0, newNoteText));
         CancelNote();
+    }
+
+    // ---------- listening mode, sleep timer, casting ----------
+
+    private async Task ToggleAudio()
+    {
+        if (lesson is null || module is null) return;
+        if (MediaSrc is not null) resumeOverride = await module.InvokeAsync<double>("getTime");
+        audioMode = !audioMode;
+        await module.InvokeVoidAsync("setPref", "coursehub.audio", audioMode);
+        if (audioMode) Transcoder.Enqueue(lesson, PlaybackVariant.Audio);
+    }
+
+    private async Task ApplySleep()
+    {
+        sleepCts?.Cancel();
+        sleepAt = null;
+        sleepAfterLesson = sleepChoice == -1;
+        if (sleepChoice <= 0) return;
+        var cts = sleepCts = new CancellationTokenSource();
+        sleepAt = DateTime.UtcNow.AddMinutes(sleepChoice);
+        try
+        {
+            await Task.Delay(TimeSpan.FromMinutes(sleepChoice), cts.Token);
+            if (module is not null) await module.InvokeVoidAsync("fadeOutAndPause", 8);
+            sleepAt = null;
+            sleepChoice = 0;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private async Task ToggleCast()
+    {
+        if (cast is null || lesson is null || course is null || videoSrc is null) return;
+        if (casting) { await cast.InvokeVoidAsync("stop"); return; }
+
+        // The Chromecast fetches media itself, so it needs absolute URLs it can reach and a signed token instead of our cookie.
+        var publicUrl = (await AppSettings.GetAsync<ServerSettings>()).PublicUrl?.TrimEnd('/');
+        var origin = publicUrl is not null ? new Uri(publicUrl).GetLeftPart(UriPartial.Authority) : new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
+        if (new Uri(origin).IsLoopback)
+        {
+            castError = L["Casting needs an address your Chromecast can reach. Open CourseHub by its network address, or set the public address in Settings → Notifications."];
+            return;
+        }
+        var token = Uri.EscapeDataString(CastTokens.Create(UserId, lesson, course));
+        string Signed(string path) => origin + path + (path.Contains('?') ? "&" : "?") + "cast=" + token;
+        var position = module is null ? 0 : await module.InvokeAsync<double>("getTime");
+        if (module is not null) await module.InvokeVoidAsync("pause");
+        await cast.InvokeVoidAsync("castLesson", new
+        {
+            lessonId = lesson.Id,
+            url = Signed(videoSrc),
+            contentType = videoSrc.Contains("?v=") ? "video/mp4" : media?.IsWebm == true ? "video/webm" : "video/mp4",
+            title = lesson.Title,
+            subtitle = course.Title,
+            image = Signed(course.CoverPath is not null ? $"{AppPaths.Base}/cover/{course.Id}" : lesson.ThumbUrl),
+            startTime = position,
+            tracks = Transcripts.Tracks(lesson).Select((t, i) => new
+            {
+                id = i + 1, language = t.Language, name = t.Label,
+                url = Signed(lesson.SubtitleUrl + (t.IsOriginal ? "" : "?lang=" + t.Language)),
+            }).ToList(),
+        }, selfRef);
+    }
+
+    // ---------- household ----------
+
+    private async Task ToggleShare(Note n)
+    {
+        await Comments.SetNoteSharedAsync(UserId, n.Id, !n.Shared);
+        n.Shared = !n.Shared;
+    }
+
+    private async Task JumpToShared(SharedNoteView n)
+    {
+        if (n.LessonPath == lesson?.RelativePath) { await Seek(n.Seconds); return; }
+        var target = Library.FindByPath(n.LessonPath);
+        if (target is not null) Nav.NavigateTo($"course/{target.Value.Course.Id}/{target.Value.Lesson.Id}?t={(int)n.Seconds}");
+    }
+
+    private async Task PostComment()
+    {
+        if (course is null || lesson is null || IsGuest || string.IsNullOrWhiteSpace(newComment)) return;
+        double? at = commentAtTime && lesson.Kind == LessonKind.Video ? await CurrentTime() : null;
+        if (await Comments.AddAsync(UserId, course, lesson, newComment, at) is { } c) comments.Add(c);
+        newComment = "";
+    }
+
+    private async Task DeleteComment(CommentView c)
+    {
+        await Comments.DeleteAsync(c.Id, UserId, IsAdmin);
+        comments.Remove(c);
+    }
+
+    private string? deckMessage;
+
+    private async Task AddCardsToDeck()
+    {
+        if (course is null || lesson is null || cards is null) return;
+        var n = await Reviews.AddAsync(UserId, course, lesson, cards);
+        deckMessage = n == 0 ? L["These cards are already in your deck."] : L["Added {0} cards to your review deck.", n];
+        studyError = null;
+        if (module is not null) await module.InvokeVoidAsync("toast", deckMessage);
+    }
+
+    private async Task CreateGuestLink()
+    {
+        if (course is null || IsGuest || IsKid) return;
+        var token = await Guests.CreateAsync(UserId, course, guestLabel, TimeSpan.FromDays(Math.Clamp(guestDays, 1, 365)));
+        newGuestUrl = $"{Nav.BaseUri}guest/{token}";
+        guestLabel = "";
+        guestLinks = await Guests.ListAsync(UserId, IsAdmin, course.FolderName);
+    }
+
+    private async Task RevokeGuest(GuestLinkInfo g)
+    {
+        await Guests.RevokeAsync(g.Id, UserId, IsAdmin);
+        guestLinks = await Guests.ListAsync(UserId, IsAdmin, course!.FolderName);
+        newGuestUrl = null;
     }
 
     private void CancelNote()
@@ -1398,6 +1745,8 @@ else
         Library.Changed -= OnLibraryChanged;
         Transcripts.Changed -= OnServiceChanged;
         Transcoder.Changed -= OnTranscoderChanged;
+        Transcoder.Changed -= OnAudioMaybeReady;
+        sleepCts?.Cancel();
         CancelCountdown();
         askCts?.Cancel();
         if (module is not null)
@@ -1407,6 +1756,7 @@ else
                 await module.InvokeVoidAsync("detach");
                 await module.DisposeAsync();
                 if (offline is not null) await offline.DisposeAsync();
+                if (cast is not null) await cast.DisposeAsync();
             }
             catch (JSDisconnectedException) { }
         }

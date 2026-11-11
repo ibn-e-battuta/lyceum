@@ -3,7 +3,10 @@
 @attribute [ExcludeFromInteractiveRouting]
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.DataProtection
 @inject UserService Users
+@inject TotpService Totp
+@inject IDataProtectionProvider DataProtection
 @inject NavigationManager Nav
 @inject OidcOptions Oidc
 
@@ -12,12 +15,26 @@
 <main class="auth">
     <div class="auth-card">
         <div class="auth-brand"><span class="logo">▶</span> CourseHub</div>
+        @if (pendingToken is not null)
+        {
+            <h1>@L["Two-factor sign-in"]</h1>
+            <p class="muted tiny">@L["Enter the 6-digit code from your authenticator app, or one of your recovery codes."]</p>
+            <EditForm Model="TwoFactor" method="post" OnValidSubmit="VerifyCodeAsync" FormName="login2fa">
+                <input type="hidden" name="TwoFactor.Pending" value="@pendingToken" />
+                <label class="field"><span>@L["Code"]</span><InputText @bind-Value="TwoFactor!.Code" autocomplete="one-time-code" inputmode="numeric" autofocus /></label>
+                @if (error is not null) { <p class="error tiny">@error</p> }
+                <button class="btn primary wide" type="submit">@L["Verify"]</button>
+            </EditForm>
+            <a class="tiny accent" href="login">@L["Start over"]</a>
+        }
+        else
+        {
         <h1>@L["Sign in"]</h1>
         @if (Changed) { <p class="good tiny">@L["Password changed. Sign in with your new password."]</p> }
         @if (!string.IsNullOrEmpty(ErrorMessage)) { <p class="error tiny">@ErrorMessage</p> }
         @if (Oidc.Enabled)
         {
-            <a class="btn primary wide sso-btn" href="@($"/auth/oidc/login?returnUrl={Uri.EscapeDataString(SafeReturnUrl)}")">@L["Sign in with {0}", Oidc.DisplayName]</a>
+            <a class="btn primary wide sso-btn" href="@($"auth/oidc/login?returnUrl={Uri.EscapeDataString(SafeReturnUrl)}")">@L["Sign in with {0}", Oidc.DisplayName]</a>
             @if (!Oidc.DisablePasswordLogin) { <div class="divider">@L["or"]</div> }
         }
         @if (!Oidc.Enabled || !Oidc.DisablePasswordLogin)
@@ -32,31 +49,42 @@
             <button class="btn @(Oidc.Enabled ? "ghost" : "primary") wide" type="submit">@L["Sign in"]</button>
         </EditForm>
         }
+        }
     </div>
 </main>
 
 @code {
     [CascadingParameter] private HttpContext HttpContext { get; set; } = default!;
-    [SupplyParameterFromForm] private LoginInput? Input { get; set; }
+    [SupplyParameterFromForm(FormName = "login")] private LoginInput? Input { get; set; }
+    [SupplyParameterFromForm(FormName = "login2fa")] private TwoFactorInput? TwoFactor { get; set; }
     [SupplyParameterFromQuery] private string? ReturnUrl { get; set; }
     [SupplyParameterFromQuery(Name = "changed")] private string? ChangedFlag { get; set; }
     [SupplyParameterFromQuery(Name = "error")] private string? ErrorMessage { get; set; }
     private bool Changed => ChangedFlag == "1";
     private string? error;
+    private string? pendingToken;
+
+    // The password step hands over a short-lived, encrypted "user id + remember me" token to the code step.
+    private ITimeLimitedDataProtector Pending => DataProtection.CreateProtector("CourseHub.Login2fa.v1").ToTimeLimitedDataProtector();
 
     protected override async Task OnInitializedAsync()
     {
         Input ??= new();
-        if (await Users.CountAsync() == 0) Nav.NavigateTo("/setup");
+        TwoFactor ??= new();
+        // Posting the code: the "login2fa" form must be on the page for Blazor to accept the submission.
+        if (!string.IsNullOrEmpty(TwoFactor.Pending)) pendingToken = TwoFactor.Pending;
+        if (await Users.CountAsync() == 0) Nav.NavigateTo("setup");
         else if (HttpMethods.IsGet(HttpContext.Request.Method) && HttpContext.User.Identity?.IsAuthenticated == true) Nav.NavigateTo(SafeReturnUrl);
     }
 
     private string SafeReturnUrl =>
-        !string.IsNullOrEmpty(ReturnUrl) && ReturnUrl.StartsWith('/') && !ReturnUrl.StartsWith("//") && !ReturnUrl.StartsWith("/\\") ? ReturnUrl : "/";
+        !string.IsNullOrEmpty(ReturnUrl) && ReturnUrl.StartsWith('/') && !ReturnUrl.StartsWith("//") && !ReturnUrl.StartsWith("/\\") ? ReturnUrl : AppPaths.Base + "/";
+
+    private string ThrottleKey(string who) => $"{HttpContext.Connection.RemoteIpAddress}|{who.Trim().ToLowerInvariant()}";
 
     private async Task SignInAsync()
     {
-        var key = $"{HttpContext.Connection.RemoteIpAddress}|{Input!.Username.Trim().ToLowerInvariant()}";
+        var key = ThrottleKey(Input!.Username);
         if (Users.IsLockedOut(key))
         {
             error = L["Too many attempts. Try again in 15 minutes."];
@@ -64,16 +92,59 @@
             return;
         }
         var user = await Users.VerifyAsync(Input!.Username, Input!.Password, key);
+        Input.Password = "";
         if (user is null)
         {
             error = L["Wrong username or password."];
-            Input.Password = "";
             return;
         }
+        if (user.TotpEnabled)
+        {
+            pendingToken = Pending.Protect($"{user.Id}|{Input.Remember}", TimeSpan.FromMinutes(5));
+            return;
+        }
+        await CompleteAsync(user, Input.Remember);
+    }
+
+    private async Task VerifyCodeAsync()
+    {
+        int userId;
+        bool remember;
+        try
+        {
+            var parts = Pending.Unprotect(TwoFactor!.Pending ?? "").Split('|');
+            userId = int.Parse(parts[0]);
+            remember = bool.Parse(parts[1]);
+        }
+        catch
+        {
+            pendingToken = null;
+            error = L["That took too long. Sign in again."];
+            return;
+        }
+        var key = ThrottleKey($"2fa:{userId}");
+        if (Users.IsLockedOut(key))
+        {
+            error = L["Too many attempts. Try again in 15 minutes."];
+            return;
+        }
+        if (!await Users.VerifySecondFactorAsync(userId, TwoFactor.Code ?? "", key, Totp))
+        {
+            pendingToken = TwoFactor.Pending;
+            error = L["That code isn't right."];
+            return;
+        }
+        var user = await Users.FindForSignInAsync(userId);
+        if (user is null) { error = L["Wrong username or password."]; return; }
+        await CompleteAsync(user, remember);
+    }
+
+    private async Task CompleteAsync(CourseHub.Data.AppUser user, bool remember)
+    {
         await HttpContext.SignInAsync(UserService.Principal(user), new AuthenticationProperties
         {
-            IsPersistent = Input!.Remember,
-            ExpiresUtc = Input!.Remember ? DateTimeOffset.UtcNow.AddDays(60) : null,
+            IsPersistent = remember,
+            ExpiresUtc = remember ? DateTimeOffset.UtcNow.AddDays(60) : null,
         });
         Nav.NavigateTo(SafeReturnUrl, forceLoad: true);
     }
@@ -83,5 +154,11 @@
         [Required] public string Username { get; set; } = "";
         [Required] public string Password { get; set; } = "";
         public bool Remember { get; set; } = true;
+    }
+
+    private sealed class TwoFactorInput
+    {
+        public string? Pending { get; set; }
+        public string? Code { get; set; }
     }
 }

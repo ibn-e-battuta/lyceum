@@ -2,7 +2,7 @@ apiVersion: v2
 name: coursehub
 description: Self-hosted, Udemy-style player for video courses you own
 type: application
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.3.0
+appVersion: "0.3.0"
 license: AGPL-3.0-only
 keywords: [courses, video, e-learning, self-hosted]

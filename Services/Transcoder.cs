@@ -4,7 +4,7 @@ using System.Threading.Channels;
 
 namespace CourseHub.Services;
 
-public enum PlaybackVariant { Direct, Remux, H264 }
+public enum PlaybackVariant { Direct, Remux, H264, Audio }
 
 public sealed record PrepareJob(string LessonId, string Title, PlaybackVariant Variant, JobState State, int Percent, string? Error, DateTime UpdatedAt);
 
@@ -46,7 +46,7 @@ public sealed class Transcoder(
         var key = JobKey(lesson.Id, variant);
         if (_jobs.TryGetValue(key, out var j) && j.State is JobState.Queued or JobState.Running) return false;
         _jobs[key] = new PrepareJob(lesson.Id, lesson.Title, variant, JobState.Queued, 0, null, DateTime.UtcNow);
-        (variant == PlaybackVariant.Remux ? _fast : _slow).Writer.TryWrite((lesson.Id, variant));
+        (variant is PlaybackVariant.Remux or PlaybackVariant.Audio ? _fast : _slow).Writer.TryWrite((lesson.Id, variant));
         Changed?.Invoke();
         return true;
     }
@@ -146,6 +146,15 @@ public sealed class Transcoder(
         var part = target + ".part.mp4";
         var args = new List<string> { "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats" };
 
+        if (variant == PlaybackVariant.Audio)
+        {
+            // Listening mode: audio only (AAC in M4A), a fraction of the video's size and playable with the screen off.
+            if (info.AudioCodec is null) throw new InvalidOperationException("This video has no sound track.");
+            args.AddRange(["-i", lesson.FullPath, "-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "0", "-map_chapters", "0"]);
+            args.AddRange(info.AudioCodec == "aac" ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "96k", "-ac", "2"]);
+        }
+        else
+        {
         if (variant == PlaybackVariant.H264 && hw == "vaapi") args.AddRange(["-vaapi_device", vaapiDevice]);
         args.AddRange(["-i", lesson.FullPath, "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "0", "-map_chapters", "0", "-sn", "-dn"]);
 
@@ -169,6 +178,10 @@ public sealed class Transcoder(
                 case "qsv":
                     args.AddRange(["-vf", $"{scale},format=nv12", "-c:v", "h264_qsv", "-global_quality", "23"]);
                     break;
+                case "v4l2m2m":
+                    // Raspberry Pi 4's encoder: bitrate-controlled, up to 1080p; needs /dev/video11 in the container.
+                    args.AddRange(["-vf", $"{scale},format=yuv420p", "-c:v", "h264_v4l2m2m", "-b:v", "5M", "-maxrate", "8M", "-bufsize", "10M"]);
+                    break;
                 case "vaapi":
                     args.AddRange(["-vf", "scale='min(1920,iw)':-2,format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "23"]);
                     break;
@@ -181,6 +194,7 @@ public sealed class Transcoder(
 
         if (info.AudioCodec is "aac" or "mp3" && variant == PlaybackVariant.Remux) args.AddRange(["-c:a", "copy"]);
         else args.AddRange(["-c:a", "aac", "-b:a", "160k", "-ac", "2"]);
+        }
         args.AddRange(["-movflags", "+faststart", "-f", "mp4", part]);
 
         var duration = info.Duration ?? lesson.DurationSeconds ?? 0;

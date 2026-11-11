@@ -1,7 +1,9 @@
 // CourseHub service worker: makes the app installable and plays downloaded lessons offline.
-const SHELL = "coursehub-shell-v3";
+const SHELL = "coursehub-shell-v4";
 const OFFLINE = "coursehub-offline-v1";
-const SHELL_FILES = ["/offline.html", "/offline.js", "/app.css", "/icon.svg", "/manifest.webmanifest"];
+// The worker lives at <base>/sw.js, so its scope is CourseHub's base path (e.g. /courses/).
+const BASE = new URL(self.registration.scope).pathname;
+const SHELL_FILES = ["offline.html", "offline.js", "app.css", "icon.svg", "manifest.webmanifest"].map((f) => BASE + f);
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
@@ -18,11 +20,11 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
 
-  if (url.pathname.startsWith("/offline-media/") || url.pathname.startsWith("/offline-thumb/")) {
+  if (url.pathname.startsWith(BASE + "offline-media/") || url.pathname.startsWith(BASE + "offline-thumb/")) {
     e.respondWith(fromOfflineCache(e.request, url.pathname));
     return;
   }
-  if (url.pathname === "/offline.html" || url.pathname === "/offline.js") {
+  if (url.pathname === BASE + "offline.html" || url.pathname === BASE + "offline.js") {
     // Network first so updates arrive, cache when offline.
     e.respondWith(fetch(e.request).then((r) => { const copy = r.clone(); caches.open(SHELL).then((c) => c.put(url.pathname, copy)); return r; })
       .catch(() => caches.match(url.pathname)));
@@ -31,7 +33,7 @@ self.addEventListener("fetch", (e) => {
   if (e.request.mode === "navigate") {
     // Pages need the server. Only step in when the device is offline: then show the downloads page.
     // (Online navigations are left to the browser untouched, which is the most robust behaviour.)
-    if (!self.navigator.onLine) e.respondWith(caches.match("/offline.html"));
+    if (!self.navigator.onLine) e.respondWith(caches.match(BASE + "offline.html"));
     return;
   }
   if (SHELL_FILES.includes(url.pathname)) {

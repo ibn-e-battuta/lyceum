@@ -9,6 +9,7 @@
 @inject Transcoder Transcoder
 @inject MediaTools Tools
 @inject AppSettingsService AppSettings
+@inject HealthReportService Health
 @inject IDbContextFactory<ProgressDb> DbFactory
 
 <PageTitle>@L["Admin"] · CourseHub</PageTitle>
@@ -110,9 +111,55 @@
                     <dt>@L[label]</dt><dd>@Format.Bytes(size)</dd>
                 }
             </dl>
-            <a class="tiny accent" href="/settings#playback">@L["Manage in Settings"] →</a>
+            <a class="tiny accent" href="settings#playback">@L["Manage in Settings"] →</a>
         </section>
     </div>
+
+    <h2 class="row-title">🩺 @L["Library health"]</h2>
+    <section class="panel">
+        @if (Health.Progress is { } hp)
+        {
+            <p>@L["Checking {0} of {1} lessons…", hp.Done, hp.Total]</p>
+            <div class="bar"><span style="width:@(hp.Total == 0 ? 0 : 100 * hp.Done / hp.Total)%"></span></div>
+        }
+        else
+        {
+            <div class="row">
+                <button class="btn primary small" @onclick="RunHealth">@(Health.Last is null ? L["Check the library"] : L["Check again"])</button>
+                @if (Health.Last is { } hr) { <span class="muted tiny">@L["Last checked {0}: {1} lessons.", Format.Ago(hr.CreatedAt), hr.LessonsChecked]</span> }
+            </div>
+        }
+        @if (Health.Last is { } report)
+        {
+            @if (report.Issues.Count == 0) { <p class="good">✓ @L["Everything looks good."]</p> }
+            @foreach (var kind in Enum.GetValues<HealthIssueKind>())
+            {
+                var items = report.Issues.Where(i => i.Kind == kind).ToList();
+                if (items.Count == 0) continue;
+                <details class="health-group" open="@(kind is HealthIssueKind.Broken or HealthIssueKind.Empty)">
+                    <summary><strong>@HealthIcon(kind) @L[HealthLabel(kind)]</strong> <span class="count">@items.Count</span></summary>
+                    @if (kind == HealthIssueKind.MissingTranscript)
+                    {
+                        @foreach (var g in items.GroupBy(i => i.Course).OrderByDescending(g => g.Count()))
+                        {
+                            <div class="health-item"><a href="@($"course/{g.Key.Id}")">@g.Key.Title</a> <span class="muted tiny">@L["{0} of {1} videos", g.Count(), g.Key.VideoCount]</span></div>
+                        }
+                    }
+                    else
+                    {
+                        @foreach (var i in items.Take(200))
+                        {
+                            <div class="health-item">
+                                <a href="@(i.Lesson is null ? $"course/{i.Course.Id}" : $"course/{i.Course.Id}/{i.Lesson.Id}")">@i.Course.Title@(i.Lesson is null ? "" : " › " + i.Lesson.Title)</a>
+                                <div class="muted tiny">@i.Detail@(i.Lesson is null ? "" : " · " + i.Lesson.RelativePath)</div>
+                            </div>
+                        }
+                        @if (items.Count > 200) { <p class="muted tiny">@L["…and {0} more.", items.Count - 200]</p> }
+                    }
+                </details>
+            }
+        }
+    </section>
 
     <h2 class="row-title">@L["Background jobs"]</h2>
     <div class="admin-grid">
@@ -150,6 +197,7 @@
     {
         await Load();
         Transcripts.Changed += Refresh;
+        Health.Changed += Refresh;
         Transcoder.Changed += Refresh;
         // "Watching now" changes without events from here, so refresh it every 15 s.
         timer = new Timer(_ => Refresh(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
@@ -190,6 +238,24 @@
         ];
     }
 
+    private void RunHealth() => _ = Health.RunAsync();
+
+    private static string HealthIcon(HealthIssueKind k) => k switch
+    {
+        HealthIssueKind.Broken => "⛔", HealthIssueKind.Empty => "⛔", HealthIssueKind.NeedsConversion => "🔁",
+        HealthIssueKind.Duplicate => "👯", HealthIssueKind.MissingTranscript => "📝", _ => "🖼",
+    };
+
+    private static string HealthLabel(HealthIssueKind k) => k switch
+    {
+        HealthIssueKind.Broken => "Broken or unreadable files",
+        HealthIssueKind.Empty => "Empty files",
+        HealthIssueKind.NeedsConversion => "Videos browsers can't play directly",
+        HealthIssueKind.Duplicate => "Duplicate files",
+        HealthIssueKind.MissingTranscript => "Videos without transcripts",
+        _ => "Courses without a cover image",
+    };
+
     private RenderFragment JobList(List<(string Title, JobState State, int Percent, string? Error)> jobs) => __builder =>
     {
         if (jobs.Count == 0)
@@ -213,6 +279,7 @@
     {
         timer?.Dispose();
         Transcripts.Changed -= Refresh;
+        Health.Changed -= Refresh;
         Transcoder.Changed -= Refresh;
     }
 }

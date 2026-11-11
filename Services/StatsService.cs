@@ -27,7 +27,7 @@ public sealed class StatsService(IDbContextFactory<ProgressDb> dbFactory, Course
     /// <summary>A day counts towards a streak once you've watched at least a minute.</summary>
     private const double StreakMinimumSeconds = 60;
 
-    public async Task<LearningStats> GetAsync(int userId, IReadOnlySet<int>? allowedLibraries = null)
+    public async Task<LearningStats> GetAsync(int userId, AccessScope? allowedLibraries = null)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
         var days = await db.WatchDays.AsNoTracking().Where(d => d.UserId == userId).ToListAsync();

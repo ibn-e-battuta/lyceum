@@ -41,15 +41,15 @@ public static class ApiEndpoints
 
         api.MapGet("/libraries", async (ClaimsPrincipal p, UserService users, CourseLibrary lib) =>
         {
-            var access = await users.AllowedLibrariesAsync(p.GetUserId()!.Value);
-            return lib.Libraries.Where(l => access is null || access.Contains(l.Id))
+            var access = await users.ScopeAsync(p.GetUserId()!.Value);
+            return lib.Libraries.Where(l => access is null || access.AllowsLibrary(l.Id))
                 .Select(l => new LibraryDto(l.Id, l.Name, lib.Courses.Count(c => c.LibraryId == l.Id)));
         });
 
         api.MapGet("/courses", async (int? library, ClaimsPrincipal p, UserService users, CourseLibrary lib, ProgressService progress) =>
         {
             var userId = p.GetUserId()!.Value;
-            var courses = lib.CoursesFor(await users.AllowedLibrariesAsync(userId)).Where(c => library is null || c.LibraryId == library).ToList();
+            var courses = lib.CoursesFor(await users.ScopeAsync(userId)).Where(c => library is null || c.LibraryId == library).ToList();
             var stats = await progress.StatsAsync(userId, courses);
             return courses.Select(c => Summary(c, stats[c.Id]));
         });
@@ -57,7 +57,7 @@ public static class ApiEndpoints
         api.MapGet("/continue", async (ClaimsPrincipal p, UserService users, CourseLibrary lib, ProgressService progress) =>
         {
             var userId = p.GetUserId()!.Value;
-            var courses = lib.CoursesFor(await users.AllowedLibrariesAsync(userId)).ToList();
+            var courses = lib.CoursesFor(await users.ScopeAsync(userId)).ToList();
             var stats = await progress.StatsAsync(userId, courses);
             return courses.Where(c => stats[c.Id].Started && stats[c.Id].Completed < stats[c.Id].Total)
                 .OrderByDescending(c => stats[c.Id].LastWatched).Take(20).Select(c => Summary(c, stats[c.Id]));
@@ -67,7 +67,7 @@ public static class ApiEndpoints
         {
             var userId = p.GetUserId()!.Value;
             var course = lib.GetCourse(id);
-            if (course is null || !CourseLibrary.CanAccess(course, await users.AllowedLibrariesAsync(userId))) return Results.NotFound();
+            if (course is null || !CourseLibrary.CanAccess(course, await users.ScopeAsync(userId))) return Results.NotFound();
             var prog = await progress.ForCourseAsync(userId, course);
             var stats = ProgressService.Stats(course, prog);
             return Results.Ok(new CourseDto(course.Id, course.Title, course.Author, course.Description, course.LibraryId, course.CoverUrl,
@@ -85,7 +85,7 @@ public static class ApiEndpoints
             var chapters = x.Lesson.Kind == LessonKind.Video ? (await probe.ProbeAsync(x.Lesson.FullPath))?.Chapters ?? [] : [];
             return Results.Ok(new LessonDetailDto(
                 Lesson(x.Lesson, prog), x.Course.Id,
-                transcripts.Tracks(x.Lesson).Select(t => new TrackDto(t.Language, t.Label, $"/subs/{x.Lesson.Id}.vtt{(t.IsOriginal ? "" : "?lang=" + t.Language)}")).ToList(),
+                transcripts.Tracks(x.Lesson).Select(t => new TrackDto(t.Language, t.Label, AppPaths.Url($"/subs/{x.Lesson.Id}.vtt{(t.IsOriginal ? "" : "?lang=" + t.Language)}"))).ToList(),
                 x.Lesson.Attachments.Select(a => new AttachmentDto(a.Name, a.Url, a.SizeBytes)).ToList(),
                 chapters,
                 i > 0 ? all[i - 1].Id : null,
@@ -105,7 +105,7 @@ public static class ApiEndpoints
         {
             var userId = p.GetUserId()!.Value;
             var course = lib.GetCourse(id);
-            if (course is null || !CourseLibrary.CanAccess(course, await users.AllowedLibrariesAsync(userId))) return Results.NotFound();
+            if (course is null || !CourseLibrary.CanAccess(course, await users.ScopeAsync(userId))) return Results.NotFound();
             var notes = await data.NotesForCourseAsync(userId, course);
             return Results.Ok(notes.Select(n => Note(n, lib)));
         });
@@ -117,7 +117,7 @@ public static class ApiEndpoints
             var kind = body.Kind?.Equals("bookmark", StringComparison.OrdinalIgnoreCase) == true ? NoteKind.Bookmark : NoteKind.Note;
             if (kind == NoteKind.Note && string.IsNullOrWhiteSpace(body.Text)) return Results.BadRequest(new { error = "Notes need text." });
             var note = await data.AddNoteAsync(userId, x.Course, x.Lesson, kind, body.Seconds, body.Text ?? "");
-            return Results.Created($"/api/v1/notes/{note.Id}", Note(note, lib));
+            return Results.Created(AppPaths.Url($"/api/v1/notes/{note.Id}"), Note(note, lib));
         });
 
         api.MapDelete("/notes/{id:int}", async (int id, ClaimsPrincipal p, UserDataService data) =>
@@ -128,7 +128,7 @@ public static class ApiEndpoints
 
         api.MapGet("/search", async (string q, ClaimsPrincipal p, UserService users, CourseLibrary lib, TranscriptService transcripts) =>
         {
-            var access = await users.AllowedLibrariesAsync(p.GetUserId()!.Value);
+            var access = await users.ScopeAsync(p.GetUserId()!.Value);
             q = q.Trim();
             var results = new List<SearchHitDto>();
             var courses = lib.CoursesFor(access).ToList();
@@ -143,14 +143,14 @@ public static class ApiEndpoints
         api.MapGet("/stats", async (ClaimsPrincipal p, UserService users, StatsService stats) =>
         {
             var userId = p.GetUserId()!.Value;
-            var s = await stats.GetAsync(userId, await users.AllowedLibrariesAsync(userId));
+            var s = await stats.GetAsync(userId, await users.ScopeAsync(userId));
             return new StatsDto(s.CurrentStreak, s.LongestStreak, s.TotalSeconds, s.Last7DaysSeconds, s.DailyAverageSeconds);
         });
 
         api.MapGet("/activity", async (ClaimsPrincipal p, UserService users, ActivityService activity) =>
         {
             var userId = p.GetUserId()!.Value;
-            var feed = await activity.FeedAsync(userId, await users.AllowedLibrariesAsync(userId));
+            var feed = await activity.FeedAsync(userId, await users.ScopeAsync(userId));
             return feed.Select(f => new ActivityDto(f.UserName, f.Type.ToString(), f.Course.Id, f.Course.Title, f.Lesson?.Title, f.Count, f.At));
         });
 
@@ -165,7 +165,7 @@ public static class ApiEndpoints
     {
         var lesson = lib.GetLesson(lessonId);
         if (lesson is null || lib.CourseOf(lesson) is not { } course) return null;
-        return CourseLibrary.CanAccess(course, await users.AllowedLibrariesAsync(userId)) ? (course, lesson) : null;
+        return CourseLibrary.CanAccess(course, await users.ScopeAsync(userId)) ? (course, lesson) : null;
     }
 
     private static CourseSummaryDto Summary(Course c, CourseStats s) =>

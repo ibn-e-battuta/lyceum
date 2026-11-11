@@ -7,6 +7,8 @@
 @inject TranscriptService Transcripts
 @inject MediaTools Tools
 @inject ActivityService Activity
+@inject WatchTimeService WatchTime
+@inject ReviewService Reviews
 
 <PageTitle>My Learning · CourseHub</PageTitle>
 
@@ -87,6 +89,30 @@
             <div><strong>@stats.Values.Sum(s => s.Completed)</strong><span>@L["lessons completed"]</span></div>
         </div>
 
+        @if (Me?.DailyGoalMinutes is int goal || dueCards > 0)
+        {
+            <div class="today panel">
+                @if (Me?.DailyGoalMinutes is int g)
+                {
+                    var pct = Math.Min(100, g == 0 ? 0 : 100.0 * todayMinutes / g);
+                    <div class="goal">
+                        <svg viewBox="0 0 36 36" class="ring big">
+                            <circle cx="18" cy="18" r="15.5" class="ring-bg" />
+                            <circle cx="18" cy="18" r="15.5" class="ring-fg" style="stroke-dasharray:@((pct * 0.974).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)) 100" />
+                        </svg>
+                        <div>
+                            <strong>@(todayMinutes >= g ? "🎉 " + L["Daily goal reached"] : L["{0} of {1} minutes today", todayMinutes, g])</strong>
+                            <div class="muted tiny">@L["Your daily goal"] · <a class="accent" href="settings#account">@L["change"]</a></div>
+                        </div>
+                    </div>
+                }
+                @if (dueCards > 0)
+                {
+                    <a class="due-cards" href="review">🃏 @L["{0} flashcards to review", dueCards] →</a>
+                }
+            </div>
+        }
+
         @if (inProgress.Count > 0)
         {
             <h2 class="row-title">@L["Continue learning"]</h2>
@@ -111,7 +137,7 @@
 
         @if (paths.Count > 0)
         {
-            <h2 class="row-title">@L["Learning paths"] <a class="tiny accent" href="/paths">@L["Manage"] →</a></h2>
+            <h2 class="row-title">@L["Learning paths"] <a class="tiny accent" href="paths">@L["Manage"] →</a></h2>
             <div class="continue">
                 @foreach (var p in paths)
                 {
@@ -190,6 +216,8 @@
     private List<LearningPath> paths = [];
     private List<TranscriptHit> transcriptHits = [];
     private List<FeedItem> feed = [];
+    private int todayMinutes;
+    private int dueCards;
     private string query = "";
     private string filter = "All";
     private bool scanning;
@@ -199,7 +227,7 @@
 
     /// <summary>Courses in libraries this user can see, narrowed to the chosen library.</summary>
     private List<Course> VisibleCourses => Library.CoursesFor(Access).Where(c => libraryFilter == 0 || c.LibraryId == libraryFilter).ToList();
-    private List<LibraryInfo> VisibleLibraries => Library.Libraries.Where(l => Access is null || Access.Contains(l.Id)).Where(l => Library.Courses.Any(c => c.LibraryId == l.Id)).ToList();
+    private List<LibraryInfo> VisibleLibraries => Library.Libraries.Where(l => Access is null || Access.AllowsLibrary(l.Id)).Where(l => Library.Courses.Any(c => c.LibraryId == l.Id)).ToList();
 
     private List<Course> matchingCourses => VisibleCourses
         .Where(c => c.Title.Contains(Q, StringComparison.OrdinalIgnoreCase) || (c.Author?.Contains(Q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
@@ -230,6 +258,7 @@
     protected override async Task OnInitializedAsync()
     {
         await EnsureUserAsync();
+        if (SendGuestToCourse()) return;
         Library.Changed += OnLibraryChanged;
         await LoadStats();
     }
@@ -243,6 +272,8 @@
         meta = await UserData.AllMetaAsync(UserId);
         paths = (await UserData.PathsAsync(UserId)).Where(p => p.Items.Count > 0).ToList();
         feed = await Activity.FeedAsync(UserId, Access);
+        todayMinutes = (int)Math.Round(await WatchTime.TodaySecondsAsync(UserId) / 60);
+        dueCards = (await Reviews.CountsAsync(UserId, Access)).Due;
         inProgress = Library.CoursesFor(Access)
             .Where(c => stats[c.Id].Started && stats[c.Id].Completed < stats[c.Id].Total && !MetaOf(c).Archived)
             .OrderByDescending(c => stats[c.Id].LastWatched)
@@ -278,7 +309,8 @@
 
     private string ThumbStyle(Course c, Lesson? lesson = null)
     {
-        var img = lesson is { Kind: LessonKind.Video } ? lesson.ThumbUrl : c.CoverUrl;
+        // A course's own cover wins; otherwise show the lesson you'll resume.
+        var img = c.CoverPath is null && lesson is { Kind: LessonKind.Video } ? lesson.ThumbUrl : c.CoverUrl;
         return $"background-image:url('{img}'), {Format.Gradient(c.Title)}";
     }
 

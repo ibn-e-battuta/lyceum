@@ -4,13 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Downloads · CourseHub</title>
-  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="manifest.webmanifest" />
   <meta name="theme-color" content="#0f1115" />
   <script>
     try { const t = localStorage.getItem("coursehub.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
   </script>
-  <link rel="stylesheet" href="/app.css" />
+  <link rel="stylesheet" href="app.css" />
   <style>
     .dl-layout { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
     .dl-player video { width: 100%; max-height: 60vh; background: #000; border-radius: 12px; display: block; }
@@ -27,7 +27,7 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/"><span class="logo">▶</span> CourseHub</a>
+    <a class="brand" href="./"><span class="logo">▶</span> CourseHub</a>
     <span class="status" id="net"></span>
     <span class="muted tiny push" id="usage"></span>
   </header>
@@ -42,7 +42,7 @@
     <div id="list"></div>
   </main>
   <script type="module">
-    import { list, removeLesson, usage, queueProgress, flushProgress, updatePosition } from "/offline.js";
+    import { list, removeLesson, usage, queueProgress, flushProgress, updatePosition } from "./offline.js";
 
     const $ = (id) => document.getElementById(id);
     const fmt = (b) => b > 1e9 ? (b / 1e9).toFixed(1) + " GB" : (b / 1e6).toFixed(0) + " MB";
@@ -76,7 +76,7 @@
           const row = document.createElement("div");
           row.className = "dl-item" + (current?.id === l.id ? " current" : "");
           row.innerHTML = `<img alt="" loading="lazy"><div><div class="t"></div><div class="muted tiny"></div></div><button class="icon-btn" title="Remove download">🗑</button>`;
-          row.querySelector("img").src = `/offline-thumb/${l.id}`;
+          row.querySelector("img").src = `offline-thumb/${l.id}`;
           row.querySelector(".t").textContent = l.title;
           row.querySelector(".tiny").textContent = `${l.duration ? clock(l.duration) + " · " : ""}${fmt(l.size || 0)}${l.position > 5 ? " · watched to " + clock(l.position) : ""}`;
           row.onclick = () => play(l);
@@ -93,7 +93,7 @@
       $("now-title").textContent = l.title;
       $("now-course").textContent = l.courseTitle;
       const v = $("video");
-      v.src = `/offline-media/${l.id}`;
+      v.src = `offline-media/${l.id}`;
       v.onloadedmetadata = () => { if (l.position > 5 && l.position < v.duration - 10) v.currentTime = l.position; v.play().catch(() => {}); };
       scrollTo({ top: 0, behavior: "smooth" });
       render();
@@ -115,7 +115,7 @@
     v.addEventListener("ended", () => save(true));
     addEventListener("pagehide", () => save(true));
 
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
     render();
   </script>
 </body>

@@ -43,7 +43,12 @@ public sealed partial class CourseLibrary(
     private static readonly HashSet<string> ArticleExt = new(StringComparer.OrdinalIgnoreCase) { ".html", ".htm", ".pdf" };
     private static readonly HashSet<string> SubtitleExt = new(StringComparer.OrdinalIgnoreCase) { ".vtt", ".srt" };
     private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules", "wwwroot", "Properties", "target" };
-    private static readonly HashSet<string> SkipFiles = new(StringComparer.OrdinalIgnoreCase) { ManifestFile, "cover.jpg", "cover.jpeg", "cover.png", "cover.webp", "Thumbs.db", "desktop.ini" };
+    /// <summary>Cover image names, in priority order (Plex/Jellyfin/Kodi conventions included). Matched case-insensitively.</summary>
+    private static readonly string[] CoverNames = ["cover", "folder", "poster", "thumb", "thumbnail", "artwork", "course", "banner"];
+    private static readonly string[] ImageExt = [".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"];
+    private static readonly HashSet<string> SkipFiles = new(
+        new[] { ManifestFile, "Thumbs.db", "desktop.ini" }.Concat(CoverNames.SelectMany(n => ImageExt.Select(e => n + e))),
+        StringComparer.OrdinalIgnoreCase);
     private static readonly string[] ProjectMarkers = ["*.csproj", "*.sln", "*.slnx", "package.json", "Cargo.toml", "*.fsproj"];
     private static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new()
     {
@@ -106,10 +111,10 @@ public sealed partial class CourseLibrary(
     // ---------- access control ----------
 
     /// <summary>Courses a user may see. <paramref name="allowed"/> null means every library.</summary>
-    public IEnumerable<Course> CoursesFor(IReadOnlySet<int>? allowed) =>
-        allowed is null ? Courses : Courses.Where(c => allowed.Contains(c.LibraryId));
+    public IEnumerable<Course> CoursesFor(AccessScope? scope) =>
+        scope is null ? Courses : Courses.Where(scope.Allows);
 
-    public static bool CanAccess(Course course, IReadOnlySet<int>? allowed) => allowed is null || allowed.Contains(course.LibraryId);
+    public static bool CanAccess(Course course, AccessScope? scope) => scope is null || scope.Allows(course);
 
     // ---------- libraries ----------
 
@@ -389,8 +394,10 @@ public sealed partial class CourseLibrary(
             var c = Path.GetFullPath(Path.Combine(courseDir, manifest.Cover));
             if (c.StartsWith(courseDir + Path.DirectorySeparatorChar) && File.Exists(c)) cover = c;
         }
-        cover ??= new[] { "cover.jpg", "cover.jpeg", "cover.png", "cover.webp" }
-            .Select(n => Path.Combine(courseDir, n)).FirstOrDefault(File.Exists);
+        cover ??= FindCover(courseDir);
+        // Changes when the cover (or, without one, the first video) changes, so browsers fetch the new image.
+        var coverSource = cover ?? sections.SelectMany(s => s.Lessons).FirstOrDefault(l => l.Kind == LessonKind.Video)?.FullPath;
+        var coverVersion = coverSource is null ? 0 : File.GetLastWriteTimeUtc(coverSource).Ticks / TimeSpan.TicksPerSecond;
 
         var folder = Path.GetFileName(courseDir);
         var bytes = sections.Sum(s => s.Lessons.Sum(l => l.SizeBytes + l.Attachments.Sum(a => a.SizeBytes)) + s.Files.Sum(f => f.SizeBytes));
@@ -402,7 +409,19 @@ public sealed partial class CourseLibrary(
         {
             LibraryId = lib.Id,
             TotalBytes = bytes,
+            CoverVersion = coverVersion,
         };
+    }
+
+    /// <summary>Finds cover.jpg, Folder.PNG, poster.webp… in a course folder, ignoring case (Linux file systems are case-sensitive).</summary>
+    private static string? FindCover(string courseDir)
+    {
+        var files = Directory.EnumerateFiles(courseDir).Select(f => (Path: f, Name: Path.GetFileName(f))).ToList();
+        foreach (var name in CoverNames)
+            foreach (var ext in ImageExt)
+                if (files.FirstOrDefault(f => f.Name.Equals(name + ext, StringComparison.OrdinalIgnoreCase)) is { Path: not null } hit)
+                    return hit.Path;
+        return null;
     }
 
     private static IEnumerable<Section> ManifestSections(List<Lesson> lessons, List<ManifestSection> custom)

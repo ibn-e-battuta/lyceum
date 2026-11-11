@@ -11,11 +11,32 @@ public sealed record UserInfo(int Id, string Username, bool IsAdmin, DateTime Cr
     string? DisplayName, string? LibraryAccess, bool ShareActivity)
 {
     public string Name => string.IsNullOrWhiteSpace(DisplayName) ? Username : DisplayName;
+    public bool TotpEnabled { get; init; }
+    public bool IsKid { get; init; }
+    public int? DailyLimitMinutes { get; init; }
+    public int? DailyGoalMinutes { get; init; }
+    public string? ReminderTime { get; init; }
+    public string? ReminderUrl { get; init; }
+    public bool HasReminderToken { get; init; }
+    public bool IsGuest { get; init; }
+    public string? GuestCourse { get; init; }
+    public DateTime? GuestExpiresAt { get; init; }
 
     /// <summary>Library ids this user may open; null means all.</summary>
     public IReadOnlySet<int>? AllowedLibraries => IsAdmin || LibraryAccess is null
         ? null
         : LibraryAccess.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToHashSet();
+
+    /// <summary>Everything this user may see; null means everything.</summary>
+    public AccessScope? Scope => IsGuest ? new AccessScope(null, GuestCourse ?? "\0")
+        : AllowedLibraries is { } libs ? new AccessScope(libs, null) : null;
+
+    public static UserInfo From(AppUser u) => new(u.Id, u.Username, u.IsAdmin, u.CreatedAt, u.LastLoginAt, u.DisplayName, u.LibraryAccess, u.ShareActivity)
+    {
+        TotpEnabled = u.TotpEnabled, IsKid = u.IsKid, DailyLimitMinutes = u.DailyLimitMinutes, DailyGoalMinutes = u.DailyGoalMinutes,
+        ReminderTime = u.ReminderTime, ReminderUrl = u.ReminderUrl, HasReminderToken = !string.IsNullOrEmpty(u.ReminderToken),
+        IsGuest = u.IsGuest, GuestCourse = u.GuestCourse, GuestExpiresAt = u.GuestExpiresAt,
+    };
 }
 
 public static class Claims
@@ -23,11 +44,13 @@ public static class Claims
     public const string UserId = ClaimTypes.NameIdentifier;
     public const string Stamp = "coursehub:stamp";
     public const string Admin = "coursehub:admin";
+    public const string Guest = "coursehub:guest";
 
     public static int? GetUserId(this ClaimsPrincipal user) =>
         int.TryParse(user.FindFirstValue(UserId), out var id) ? id : null;
 
     public static bool IsAdmin(this ClaimsPrincipal user) => user.HasClaim(Admin, "true");
+    public static bool IsGuest(this ClaimsPrincipal user) => user.HasClaim(Guest, "true");
 }
 
 /// <summary>Accounts, passwords and sign-in checks.</summary>
@@ -38,7 +61,7 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
     private static readonly PasswordHasher<AppUser> Hasher = new();
     private static readonly Lazy<string> DummyHash = new(() => Hasher.HashPassword(new AppUser(), Guid.NewGuid().ToString()));
     // Small cache so validating the auth cookie on every request (including video range requests) doesn't hit the DB.
-    private readonly ConcurrentDictionary<int, (string Stamp, bool IsAdmin)> _stamps = new();
+    private readonly ConcurrentDictionary<int, (string Stamp, bool IsAdmin, DateTime? GuestExpires)> _stamps = new();
     private readonly ConcurrentDictionary<string, (int Failures, DateTime WindowStart)> _failures = new();
     private int? _count;
 
@@ -52,8 +75,9 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
     public async Task<List<UserInfo>> ListAsync()
     {
         await using var db = await dbFactory.CreateDbContextAsync();
-        return await db.Users.AsNoTracking().OrderBy(u => u.Username)
-            .Select(u => new UserInfo(u.Id, u.Username, u.IsAdmin, u.CreatedAt, u.LastLoginAt, u.DisplayName, u.LibraryAccess, u.ShareActivity)).ToListAsync();
+        var list = await db.Users.AsNoTracking().OrderBy(u => u.Username)
+            .Where(u => !u.IsGuest).ToListAsync();
+        return list.Select(UserInfo.From).ToList();
     }
 
     private readonly ConcurrentDictionary<int, UserInfo> _info = new();
@@ -65,13 +89,20 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
         await using var db = await dbFactory.CreateDbContextAsync();
         var u = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == userId);
         if (u is null) return null;
-        var info = new UserInfo(u.Id, u.Username, u.IsAdmin, u.CreatedAt, u.LastLoginAt, u.DisplayName, u.LibraryAccess, u.ShareActivity);
+        var info = UserInfo.From(u);
         _info[userId] = info;
         return info;
     }
 
-    public async Task<IReadOnlySet<int>?> AllowedLibrariesAsync(int userId) =>
-        await GetAsync(userId) is { } u ? u.AllowedLibraries : new HashSet<int>(); // unknown user: nothing
+    public async Task<AccessScope?> ScopeAsync(int userId) =>
+        await GetAsync(userId) is { } u ? u.Scope : AccessScope.Nothing; // unknown user: nothing
+
+    /// <summary>Forget cached profile data after it was changed elsewhere.</summary>
+    public void Invalidate(int userId)
+    {
+        _info.TryRemove(userId, out _);
+        _stamps.TryRemove(userId, out _);
+    }
 
     /// <summary>null = every library.</summary>
     public async Task SetLibraryAccessAsync(int userId, IEnumerable<int>? libraryIds)
@@ -212,6 +243,7 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
         new Claim(ClaimTypes.Name, user.Username),
         new Claim(Claims.Stamp, user.SecurityStamp),
         new Claim(Claims.Admin, user.IsAdmin ? "true" : "false"),
+        new Claim(Claims.Guest, user.IsGuest ? "true" : "false"),
     ], CookieAuthenticationDefaults.AuthenticationScheme));
 
     /// <summary>Rejects cookies for deleted users or after a password/role change.</summary>
@@ -225,10 +257,12 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
             await using var db = await dbFactory.CreateDbContextAsync();
             var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id);
             if (user is null) { ctx.RejectPrincipal(); return; }
-            current = (user.SecurityStamp, user.IsAdmin);
+            current = (user.SecurityStamp, user.IsAdmin, user.IsGuest ? user.GuestExpiresAt ?? DateTime.MinValue : null);
             _stamps[id.Value] = current;
         }
         if (current.Stamp != stamp || ctx.Principal!.IsAdmin() != current.IsAdmin) ctx.RejectPrincipal();
+        // Guest links stop working the moment they expire, even with a valid cookie.
+        else if (current.GuestExpires is { } expires && expires <= DateTime.UtcNow) ctx.RejectPrincipal();
     }
 
     // ---------- management ----------
@@ -263,13 +297,16 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
     }
 
     /// <summary>Deletes the account and everything it saved.</summary>
-    public async Task<string?> DeleteAsync(int userId)
+    public async Task<string?> DeleteAsync(int userId, bool allowGuest = false)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
         var user = await db.Users.FindAsync(userId);
         if (user is null) return "User not found.";
+        if (user.IsGuest && !allowGuest) return "Revoke the guest link instead.";
         if (user.IsAdmin && await db.Users.CountAsync(u => u.IsAdmin) == 1) return "You can't delete the last admin.";
         await using var tx = await db.Database.BeginTransactionAsync();
+        await db.Comments.Where(c => c.UserId == userId).ExecuteDeleteAsync();
+        await db.ReviewCards.Where(c => c.UserId == userId).ExecuteDeleteAsync();
         await db.Progress.Where(p => p.UserId == userId).ExecuteDeleteAsync();
         await db.Notes.Where(p => p.UserId == userId).ExecuteDeleteAsync();
         await db.WatchDays.Where(p => p.UserId == userId).ExecuteDeleteAsync();
@@ -286,6 +323,132 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
         _info.TryRemove(userId, out _);
         _count = null;
         return null;
+    }
+
+    public async Task<AppUser?> FindForSignInAsync(int userId)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        return await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+    }
+
+    // ---------- two-factor sign-in ----------
+
+    /// <summary>Starts setup: stores a new (not yet active) secret and returns it for the QR code.</summary>
+    public async Task<string> BeginTotpSetupAsync(int userId, TotpService totp)
+    {
+        var secret = totp.NewSecret();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await db.Users.Where(u => u.Id == userId && !u.TotpEnabled)
+            .ExecuteUpdateAsync(x => x.SetProperty(u => u.TotpSecret, totp.Protect(secret)));
+        return secret;
+    }
+
+    /// <summary>Turns two-factor on after the first correct code. Returns the recovery codes, or null when the code is wrong.</summary>
+    public async Task<List<string>?> ConfirmTotpAsync(int userId, string code, TotpService totp)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var user = await db.Users.FindAsync(userId);
+        if (user?.TotpSecret is null || user.TotpEnabled) return null;
+        var step = TotpService.Verify(totp.Unprotect(user.TotpSecret), code, 0);
+        if (step is null) return null;
+        var recovery = TotpService.NewRecoveryCodes();
+        user.TotpEnabled = true;
+        user.TotpLastStep = step.Value;
+        user.RecoveryCodes = string.Join(';', recovery.Select(TotpService.HashRecovery));
+        user.SecurityStamp = Guid.NewGuid().ToString("N"); // other sessions must sign in again with the code
+        await db.SaveChangesAsync();
+        Invalidate(userId);
+        return recovery;
+    }
+
+    public async Task DisableTotpAsync(int userId)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await db.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(x => x
+            .SetProperty(u => u.TotpEnabled, false).SetProperty(u => u.TotpSecret, (string?)null)
+            .SetProperty(u => u.RecoveryCodes, (string?)null).SetProperty(u => u.TotpLastStep, 0));
+        Invalidate(userId);
+    }
+
+    /// <summary>Checks a 6-digit code or a recovery code (recovery codes work once).</summary>
+    public async Task<bool> VerifySecondFactorAsync(int userId, string code, string throttleKey, TotpService totp)
+    {
+        if (IsLockedOut(throttleKey)) return false;
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var user = await db.Users.FindAsync(userId);
+        if (user is null || !user.TotpEnabled || user.TotpSecret is null) return false;
+        var ok = false;
+        if (TotpService.Verify(totp.Unprotect(user.TotpSecret), code, user.TotpLastStep) is { } step)
+        {
+            user.TotpLastStep = step;
+            ok = true;
+        }
+        else if (user.RecoveryCodes is { Length: > 0 } stored)
+        {
+            var hashes = stored.Split(';').ToList();
+            if (hashes.Remove(TotpService.HashRecovery(code)))
+            {
+                user.RecoveryCodes = string.Join(';', hashes);
+                ok = true;
+                logger.LogWarning("User {User} signed in with a recovery code ({Left} left)", user.Username, hashes.Count);
+            }
+        }
+        if (!ok)
+        {
+            _failures.AddOrUpdate(throttleKey, (1, DateTime.UtcNow), (_, f) =>
+                DateTime.UtcNow - f.WindowStart > TimeSpan.FromMinutes(15) ? (1, DateTime.UtcNow) : (f.Failures + 1, f.WindowStart));
+            return false;
+        }
+        _failures.TryRemove(throttleKey, out _);
+        user.LastLoginAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<int> RecoveryCodesLeftAsync(int userId)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var stored = await db.Users.Where(u => u.Id == userId).Select(u => u.RecoveryCodes).FirstOrDefaultAsync();
+        return string.IsNullOrEmpty(stored) ? 0 : stored.Split(';').Length;
+    }
+
+    // ---------- kids, goals and reminders ----------
+
+    public async Task SetKidAsync(int userId, bool isKid, int? dailyLimitMinutes)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await db.Users.Where(u => u.Id == userId && !u.IsAdmin).ExecuteUpdateAsync(x => x
+            .SetProperty(u => u.IsKid, isKid)
+            .SetProperty(u => u.DailyLimitMinutes, isKid && dailyLimitMinutes is > 0 ? dailyLimitMinutes : null));
+        Invalidate(userId);
+    }
+
+    public async Task SetGoalAsync(int userId, int? goalMinutes, string? reminderTime, string? reminderUrl, string? reminderToken, bool keepToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var user = await db.Users.FindAsync(userId);
+        if (user is null) return;
+        user.DailyGoalMinutes = goalMinutes is > 0 ? Math.Min(goalMinutes.Value, 24 * 60) : null;
+        user.ReminderTime = TimeOnly.TryParse(reminderTime, out var t) ? t.ToString("HH:mm") : null;
+        user.ReminderUrl = string.IsNullOrWhiteSpace(reminderUrl) ? null : reminderUrl.Trim();
+        if (!keepToken) user.ReminderToken = string.IsNullOrWhiteSpace(reminderToken) ? null : reminderToken.Trim();
+        await db.SaveChangesAsync();
+        Invalidate(userId);
+    }
+
+    public async Task MarkRemindedAsync(int userId, string day)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await db.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(x => x.SetProperty(u => u.LastReminderDay, day));
+    }
+
+    /// <summary>Users who asked for a reminder at this minute and haven't had one today.</summary>
+    public async Task<List<AppUser>> DueForReminderAsync(string hhmm, string today)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        return await db.Users.AsNoTracking()
+            .Where(u => !u.IsGuest && u.ReminderTime == hhmm && u.ReminderUrl != null && u.LastReminderDay != today)
+            .ToListAsync();
     }
 
     public static ClaimsPrincipal PrincipalFor(UserInfo user, string stamp, string scheme) => new(new ClaimsIdentity(

@@ -33,6 +33,8 @@ public sealed record AiSettings
     public string BaseUrl { get; init; } = "http://localhost:11434/v1";
     public string? ApiKey { get; init; }
     public string Model { get; init; } = "llama3.2";
+    /// <summary>Embedding model for "ask this course" search by meaning, e.g. nomic-embed-text. Empty = keywords only.</summary>
+    public string? EmbeddingModel { get; init; }
 }
 
 public sealed record NotificationTarget
@@ -84,7 +86,7 @@ public sealed class AppSettingsService(IDbContextFactory<ProgressDb> dbFactory)
 
     /// <summary>Cached value, for hot paths that can't await (falls back to defaults before the first load).</summary>
     public T Current<T>() where T : new() =>
-        _cache.TryGetValue(typeof(T).Name, out var v) ? (T)v : GetAsync<T>().GetAwaiter().GetResult();
+        _cache.TryGetValue(typeof(T).Name, out var v) ? (T)v : Task.Run(GetAsync<T>).GetAwaiter().GetResult();
 
     public async Task SaveAsync<T>(T value) where T : notnull
     {

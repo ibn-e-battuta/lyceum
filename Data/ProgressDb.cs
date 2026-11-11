@@ -20,6 +20,35 @@ public class AppUser
     public string? LibraryAccess { get; set; }
     /// <summary>Show this user's course starts/completions in the household activity feed.</summary>
     public bool ShareActivity { get; set; } = true;
+
+    // ---- two-factor sign-in (TOTP) ----
+    /// <summary>Base32 secret, encrypted with ASP.NET Data Protection.</summary>
+    public string? TotpSecret { get; set; }
+    public bool TotpEnabled { get; set; }
+    /// <summary>Last accepted 30-second time step, so a code can't be replayed.</summary>
+    public long TotpLastStep { get; set; }
+    /// <summary>SHA-256 hashes of unused recovery codes, separated by ';'.</summary>
+    public string? RecoveryCodes { get; set; }
+
+    // ---- kids' profiles ----
+    public bool IsKid { get; set; }
+    /// <summary>Daily watch-time limit for kids; null means unlimited.</summary>
+    public int? DailyLimitMinutes { get; set; }
+
+    // ---- goals & reminders ----
+    public int? DailyGoalMinutes { get; set; }
+    /// <summary>Local time ("HH:mm") to send a reminder when the goal isn't met yet.</summary>
+    public string? ReminderTime { get; set; }
+    /// <summary>Personal ntfy topic URL for reminders.</summary>
+    public string? ReminderUrl { get; set; }
+    public string? ReminderToken { get; set; }
+    public string? LastReminderDay { get; set; }
+
+    // ---- guest links ----
+    /// <summary>Hidden account behind a guest link: can open only <see cref="GuestCourse"/> until <see cref="GuestExpiresAt"/>.</summary>
+    public bool IsGuest { get; set; }
+    public string? GuestCourse { get; set; }
+    public DateTime? GuestExpiresAt { get; set; }
 }
 
 /// <summary>A folder of courses. Library #1 is the one from configuration (CourseHub:CoursesRoot).</summary>
@@ -109,6 +138,66 @@ public class Note
     public string Text { get; set; } = "";
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+    /// <summary>Visible to everyone in the household who can open the course.</summary>
+    public bool Shared { get; set; }
+}
+
+/// <summary>A household comment on a lesson, optionally at a moment in the video.</summary>
+public class LessonComment
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public string CoursePath { get; set; } = "";
+    public string LessonPath { get; set; } = "";
+    public double? Seconds { get; set; }
+    public string Text { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>Time-limited link that lets someone without an account watch one course.</summary>
+public class GuestLink
+{
+    public int Id { get; set; }
+    public string TokenHash { get; set; } = "";
+    public string CoursePath { get; set; } = "";
+    public string Label { get; set; } = "";
+    public int CreatedByUserId { get; set; }
+    /// <summary>The hidden guest account that the link signs into.</summary>
+    public int? GuestUserId { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? LastUsedAt { get; set; }
+    public int Visits { get; set; }
+}
+
+/// <summary>A flashcard in someone's spaced-repetition deck (SM-2 scheduling).</summary>
+public class ReviewCard
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public string CoursePath { get; set; } = "";
+    public string? LessonPath { get; set; }
+    public string Front { get; set; } = "";
+    public string Back { get; set; } = "";
+    public DateTime Due { get; set; }
+    public double IntervalDays { get; set; }
+    public double Ease { get; set; } = 2.5;
+    public int Repetitions { get; set; }
+    public int Lapses { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? LastReviewedAt { get; set; }
+}
+
+/// <summary>Embedding of ~45 seconds of transcript, for searching a course by meaning.</summary>
+public class PassageEmbedding
+{
+    public int Id { get; set; }
+    public string LessonPath { get; set; } = "";
+    public double Start { get; set; }
+    public string Text { get; set; } = "";
+    public string Model { get; set; } = "";
+    /// <summary>float32 vector, little-endian.</summary>
+    public byte[] Vector { get; set; } = [];
 }
 
 /// <summary>Seconds actually spent watching, per user, day and course.</summary>
@@ -182,6 +271,10 @@ public class ProgressDb(DbContextOptions<ProgressDb> options) : DbContext(option
     public DbSet<AppSetting> Settings => Set<AppSetting>();
     public DbSet<ActivityEvent> Activity => Set<ActivityEvent>();
     public DbSet<AiContent> AiContent => Set<AiContent>();
+    public DbSet<LessonComment> Comments => Set<LessonComment>();
+    public DbSet<GuestLink> GuestLinks => Set<GuestLink>();
+    public DbSet<ReviewCard> ReviewCards => Set<ReviewCard>();
+    public DbSet<PassageEmbedding> Embeddings => Set<PassageEmbedding>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -228,6 +321,14 @@ public class ProgressDb(DbContextOptions<ProgressDb> options) : DbContext(option
             e.HasIndex(a => new { a.UserId, a.CoursePath, a.Type });
         });
         b.Entity<AiContent>().HasIndex(a => new { a.LessonPath, a.Kind }).IsUnique();
+        b.Entity<LessonComment>().HasIndex(c => c.LessonPath);
+        b.Entity<GuestLink>().HasIndex(g => g.TokenHash).IsUnique();
+        b.Entity<ReviewCard>(e =>
+        {
+            e.HasIndex(c => new { c.UserId, c.Due });
+            e.HasIndex(c => new { c.UserId, c.Front });
+        });
+        b.Entity<PassageEmbedding>().HasIndex(p => new { p.LessonPath, p.Model });
     }
 
     /// <summary>

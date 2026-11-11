@@ -1,0 +1,180 @@
+@page "/review"
+@inherits AppPage
+@inject ReviewService Reviews
+@inject CourseLibrary Library
+@inject IJSRuntime JS
+
+<PageTitle>@L["Review"] · CourseHub</PageTitle>
+
+<TopNav />
+
+<main class="home narrow">
+    <div class="page-head">
+        <h1 class="page-title">@L["Review"]</h1>
+        <select @bind="courseFilter" @bind:after="Load">
+            <option value="">@L["All courses"]</option>
+            @foreach (var c in Library.CoursesFor(Access).Where(c => deck.Any(d => d.CoursePath == c.FolderName)))
+            {
+                <option value="@c.FolderName">@c.Title</option>
+            }
+        </select>
+    </div>
+    <div class="summary">
+        <div><strong>@counts.Due</strong><span>@L["due now"]</span></div>
+        <div><strong>@counts.ReviewedToday</strong><span>@L["reviewed today"]</span></div>
+        <div><strong>@counts.Total</strong><span>@L["cards in your deck"]</span></div>
+    </div>
+
+    @if (current is null)
+    {
+        <div class="panel review-empty">
+            @if (counts.Total == 0)
+            {
+                <h2>@L["Your deck is empty"]</h2>
+                <p class="muted">@L["Open a lesson's Study tab, make flashcards, and choose \"Add to my review deck\". Cards then come back here just before you'd forget them."]</p>
+            }
+            else
+            {
+                <h2>🎉 @L["All caught up"]</h2>
+                <p class="muted">@L["No cards are due right now. Come back later — the next ones are scheduled for you."]</p>
+            }
+        </div>
+    }
+    else
+    {
+        var course = Library.GetCourseByFolder(current.CoursePath);
+        var lesson = current.LessonPath is null ? null : Library.FindByPath(current.LessonPath)?.Lesson;
+        var preview = ReviewService.Preview(current);
+        <div class="review-card panel" tabindex="0" @onkeydown="OnKey" @ref="cardRef">
+            <div class="muted tiny">
+                @course?.Title@(lesson is null ? "" : " · " + lesson.Title)
+                <span class="push">@L["{0} left", queue.Count]</span>
+            </div>
+            <div class="review-front">@current.Front</div>
+            @if (revealed)
+            {
+                <div class="review-back">@current.Back</div>
+                <div class="grade-row">
+                    @foreach (var g in Enum.GetValues<ReviewGrade>())
+                    {
+                        <button class="btn grade grade-@g.ToString().ToLowerInvariant()" @onclick="() => Grade(g)">
+                            <strong>@L[g.ToString()]</strong>
+                            <span class="tiny">@ReviewService.Human(preview[g])</span>
+                        </button>
+                    }
+                </div>
+                @if (lesson is not null && course is not null)
+                {
+                    <a class="tiny accent" href="@($"course/{course.Id}/{lesson.Id}")">@L["Open the lesson"] →</a>
+                }
+            }
+            else
+            {
+                <button class="btn primary wide" @onclick="() => revealed = true">@L["Show answer"] <span class="muted tiny">(Space)</span></button>
+            }
+        </div>
+        <p class="muted tiny">@L["Keys: Space shows the answer, 1–4 grades it (Again, Hard, Good, Easy)."]</p>
+    }
+
+    <details class="panel deck">
+        <summary>@L["Manage your deck"] (@deck.Count)</summary>
+        <div class="row form-row">
+            <select @bind="newCourse">
+                <option value="">@L["Course…"]</option>
+                @foreach (var c in Library.CoursesFor(Access)) { <option value="@c.FolderName">@c.Title</option> }
+            </select>
+            <input placeholder="@L["Question"]" @bind="newFront" />
+            <input placeholder="@L["Answer"]" @bind="newBack" />
+            <button class="btn ghost small" disabled="@(newCourse == "" || string.IsNullOrWhiteSpace(newFront) || string.IsNullOrWhiteSpace(newBack))" @onclick="AddCard">@L["Add card"]</button>
+        </div>
+        <table class="stats-table">
+            <thead><tr><th>@L["Question"]</th><th>@L["Course"]</th><th>@L["Next review"]</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var c in deck)
+                {
+                    <tr>
+                        <td>@c.Front<div class="muted tiny">@c.Back</div></td>
+                        <td class="muted tiny">@(Library.GetCourseByFolder(c.CoursePath)?.Title ?? c.CoursePath)</td>
+                        <td class="muted tiny">@(c.Due <= DateTime.UtcNow ? L["now"] : ReviewService.Human(c.Due - DateTime.UtcNow))</td>
+                        <td><button class="icon-btn" title="@L["Delete"]" @onclick="() => Delete(c)">🗑</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </details>
+</main>
+
+@code {
+    private ReviewCounts counts = new(0, 0, 0);
+    private Queue<CourseHub.Data.ReviewCard> queue = new();
+    private CourseHub.Data.ReviewCard? current;
+    private List<CourseHub.Data.ReviewCard> deck = [];
+    private bool revealed;
+    private string courseFilter = "";
+    private string newCourse = "", newFront = "", newBack = "";
+    private ElementReference cardRef;
+    private bool focusPending;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EnsureUserAsync();
+        if (SendGuestToCourse()) return;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        counts = await Reviews.CountsAsync(UserId, Access);
+        queue = new Queue<CourseHub.Data.ReviewCard>(await Reviews.DueAsync(UserId, Access, courseFilter == "" ? null : courseFilter));
+        deck = await Reviews.AllAsync(UserId, Access);
+        Next();
+    }
+
+    private void Next()
+    {
+        current = queue.Count > 0 ? queue.Dequeue() : null;
+        revealed = false;
+        focusPending = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusPending && current is not null)
+        {
+            focusPending = false;
+            try { await cardRef.FocusAsync(); } catch (InvalidOperationException) { }
+        }
+    }
+
+    private async Task Grade(ReviewGrade g)
+    {
+        if (current is null) return;
+        await Reviews.GradeAsync(UserId, current.Id, g);
+        // "Again" comes back within this session after the other due cards.
+        if (g == ReviewGrade.Again) queue.Enqueue(current);
+        counts = await Reviews.CountsAsync(UserId, Access);
+        deck = await Reviews.AllAsync(UserId, Access);
+        Next();
+    }
+
+    private async Task OnKey(KeyboardEventArgs e)
+    {
+        if (current is null) return;
+        if (!revealed && (e.Key == " " || e.Key == "Enter")) { revealed = true; return; }
+        if (revealed && e.Key is "1" or "2" or "3" or "4") await Grade((ReviewGrade)(int.Parse(e.Key) - 1));
+    }
+
+    private async Task AddCard()
+    {
+        if (Library.GetCourseByFolder(newCourse) is not { } c || !CourseLibrary.CanAccess(c, Access)) return;
+        await Reviews.CreateAsync(UserId, c, newFront, newBack);
+        newFront = newBack = "";
+        await Load();
+    }
+
+    private async Task Delete(CourseHub.Data.ReviewCard c)
+    {
+        await Reviews.DeleteAsync(UserId, c.Id);
+        await Load();
+    }
+}

@@ -3,21 +3,34 @@
 @implements IDisposable
 
 <header class="topbar">
-    <a class="brand" href="/"><span class="logo">▶</span><span class="hide-mobile">CourseHub</span></a>
-    <nav class="nav">
-        @foreach (var (href, label) in Links)
+    <a class="brand" href="./"><span class="logo">▶</span><span class="hide-mobile">CourseHub</span></a>
+    <AuthorizeView>
+        @if (context.User.IsGuest())
         {
-            <a href="@href" class="@(IsActive(href) ? "active" : "")">@L[label]</a>
+            <span class="muted tiny">@L["Guest access"]</span>
         }
-        <a href="/offline.html" target="_top" title="@L["Lessons saved on this device"]">@L["Downloads"]</a>
-        <AuthorizeView Policy="Admin">
-            <a href="/admin" class="@(IsActive("/admin") ? "active" : "")">@L["Admin"]</a>
-        </AuthorizeView>
-    </nav>
+        else
+        {
+            <nav class="nav">
+                @foreach (var (href, label) in Links)
+                {
+                    <a href="@(href == "/" ? "./" : href.TrimStart('/'))" class="@(IsActive(href) ? "active" : "")">@L[label]</a>
+                }
+                <a href="offline.html" target="_top" title="@L["Lessons saved on this device"]">@L["Downloads"]</a>
+                @if (context.User.IsAdmin())
+                {
+                    <a href="admin" class="@(IsActive("/admin") ? "active" : "")">@L["Admin"]</a>
+                }
+            </nav>
+        }
+    </AuthorizeView>
     @ChildContent
     <button class="icon-btn theme-btn" title="@L["Theme: {0}", L[ThemeLabel]]" @onclick="CycleTheme">@ThemeIcon</button>
     <AuthorizeView>
-        <a class="user-chip hide-mobile" href="/settings" title="@L["Account settings"]">@context.User.Identity?.Name</a>
+        @if (!context.User.IsGuest())
+        {
+            <a class="user-chip hide-mobile" href="settings" title="@L["Account settings"]">@context.User.Identity?.Name</a>
+        }
     </AuthorizeView>
 </header>
 
@@ -26,7 +39,7 @@
 
     private static readonly (string Href, string Label)[] Links =
     [
-        ("/", "My learning"), ("/paths", "Paths"), ("/notes", "Notes"), ("/stats", "Stats"), ("/settings", "Settings"),
+        ("/", "My learning"), ("/review", "Review"), ("/paths", "Paths"), ("/notes", "Notes"), ("/stats", "Stats"), ("/settings", "Settings"),
     ];
 
     private string theme = "system";

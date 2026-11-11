@@ -12,7 +12,7 @@
 <main class="home narrow">
     <div class="page-head">
         <h1 class="page-title">My notes</h1>
-        <a class="btn ghost" href="/api/notes.md" download>⬇ Export all as Markdown</a>
+        <a class="btn ghost" href="api/notes.md" download>⬇ Export all as Markdown</a>
     </div>
 
     <div class="chips">
@@ -86,6 +86,7 @@
     protected override async Task OnInitializedAsync()
     {
         await EnsureUserAsync();
+        if (SendGuestToCourse()) return;
         notes = await UserData.AllNotesAsync(UserId);
     }
 

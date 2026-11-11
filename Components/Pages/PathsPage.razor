@@ -97,6 +97,7 @@
     private async Task Load()
     {
         await EnsureUserAsync();
+        if (SendGuestToCourse()) return;
         paths = await UserData.PathsAsync(UserId);
         stats = await ProgressService.StatsAsync(UserId, Library.CoursesFor(Access).ToList());
         foreach (var p in paths) adding.TryAdd(p.Id, "");

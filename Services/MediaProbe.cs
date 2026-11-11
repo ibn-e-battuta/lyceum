@@ -102,7 +102,7 @@ public sealed class MediaProbe
     public MediaInfo? Cached(string path) => _cache.TryGetValue(Key(path), out var v) ? v : null;
 
     /// <summary>Synchronous variant for the library scan (only used for files Mp4Duration can't read).</summary>
-    public double? Duration(string path) => Available ? ProbeAsync(path).GetAwaiter().GetResult()?.Duration : null;
+    public double? Duration(string path) => Available ? Task.Run(() => ProbeAsync(path)).GetAwaiter().GetResult()?.Duration : null;
 
     public async Task<MediaInfo?> ProbeAsync(string path)
     {
