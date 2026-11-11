@@ -21,6 +21,7 @@ Built with ASP.NET Core (.NET 10), Blazor Server and SQLite. It ships as one Doc
 - **Household:** share notes with everyone who can open a course, discuss each lesson in comments, give **kids' profiles** a daily time limit and their own libraries, and send a **guest link** that opens one course until a date.
 - **Security:** two-factor sign-in with an authenticator app (TOTP) and recovery codes.
 - **For admins:** a dashboard (who's watching now, per-user activity, storage per library, background jobs), a **library health report** (broken files, duplicates, missing transcripts and covers), **scheduled backups** of `/config`, a **Prometheus** `/metrics` endpoint, notifications to **ntfy** or **webhooks**, and a **REST API** with API keys.
+- **Course documents:** pair Lyceum with [Lectern](https://github.com/ibn-e-battuta/lectern) to keep the bit.ai / bitdocs.ai documents that come with a course next to its videos, always up to date. See [Course documents with Lectern](#course-documents-with-lectern).
 - **Everywhere:** light and dark themes; English, German, Spanish and French; installable as an app (PWA) on phones and desktops.
 
 ## Install
@@ -142,7 +143,7 @@ Everything has a sensible default in the image. Override settings with environme
 
 ```
 config/
-├── lyceum.db            users, progress, notes, stats, paths, settings
+├── lyceum.db               users, progress, notes, stats, paths, settings
 ├── keys/                   sign-in cookie keys
 ├── backups/                scheduled backup zips (Settings → Server backups)
 └── storage/
@@ -154,6 +155,73 @@ config/
 ```
 
 Lyceum backs up the database, the keys and (optionally) the transcripts every night into `config/backups` (**Settings → Server backups**: time, how many to keep, *Back up now* and downloads). The database copy is made with SQLite's `VACUUM INTO`, so it's consistent while Lyceum runs. To restore, stop Lyceum and unzip a backup into `/config`. For off-site copies, sync `config/backups` elsewhere. Each user can also export their own data from **Settings → Backup**.
+
+## Course documents with Lectern
+
+Many courses come with written material: guides, code references and exercises, published on bit.ai / bitdocs.ai. [Lectern](https://github.com/ibn-e-battuta/lectern) is a separate, optional app that keeps local copies of those documents in your course folders, and updates them when the author changes them.
+
+### How they work together
+
+The two apps never talk to each other. They share your courses folder:
+
+```
+ bitdocs.ai ──▶ Lectern ──writes──▶ courses/Mastering C#/Docs/ ◀──reads (read-only)── Lyceum
+```
+
+- **Lectern writes into the course folders.** You give it a document's share link and a folder inside a course, such as `Mastering C#/Docs`. It saves the document there as Markdown with its images and attachments, plus a PDF.
+- **Lyceum shows them with the course.** The `Docs` folder appears as a section of the course:
+  - each document's PDF is a reading lesson, tracked like any other lesson;
+  - its Markdown pages and attachments are the section's files.
+- **New and updated documents show up by themselves.** Lyceum watches the folder, or rescans every 30 minutes where watching isn't available.
+- **Lectern keeps everything else in its own data folder.** Its links, history and docs website stay out of the courses folder, so Lyceum only ever sees course content.
+
+Each app runs fine on its own: Lyceum without Lectern simply has no synced documents, and Lectern without Lyceum is a standalone document mirror with its own web UI. Either can be stopped or upgraded without touching the other.
+
+### Running both
+
+Add Lectern to the same compose file. Lectern has no published image; Compose builds it from its repository:
+
+```yaml
+# docker-compose.yml
+services:
+  lyceum:
+    image: ghcr.io/ibn-e-battuta/lyceum:latest
+    user: "1000:1000"                                   # `id -u`:`id -g`
+    ports:
+      - "8080:8080"
+    volumes:
+      - /path/to/your/courses:/courses:ro               # Lyceum only reads
+      - ./config:/config
+    environment:
+      TZ: Europe/London
+    restart: unless-stopped
+
+  lectern:
+    build: https://github.com/ibn-e-battuta/lectern.git#main
+    user: "1000:1000"
+    ports:
+      - "127.0.0.1:8790:8790"                           # web UI, this machine only
+    volumes:
+      - /path/to/your/courses:/courses                  # Lectern writes the documents
+      - ./lectern-data:/data                            # links, settings, history
+    environment:
+      TZ: Europe/London
+    restart: unless-stopped
+```
+
+```bash
+mkdir -p config lectern-data && docker compose up -d
+```
+
+Then add documents at **http://localhost:8790**, and watch the course in Lyceum at `http://<server>:8080`.
+
+| Task | Command |
+|---|---|
+| Start only Lyceum, or only Lectern | `docker compose up -d lyceum` · `docker compose up -d lectern` |
+| Stop one, keep the other running | `docker compose stop lectern` |
+| Update | `docker compose pull lyceum && docker compose build --pull lectern && docker compose up -d` |
+
+See Lectern's README for its settings, schedule and command line.
 
 ## Video compatibility & hardware acceleration
 
@@ -315,6 +383,29 @@ docker compose pull && docker compose up -d
 ```
 
 Database changes are applied automatically on startup. Databases from the early single-user builds are backed up next to the original as `lyceum.db.pre-accounts-*.bak`, and their data goes to the first account you create.
+
+### Upgrading from CourseHub
+
+Lyceum was called **CourseHub** up to version 0.3.0. Your data carries over; your configuration needs a few renames.
+
+**Moved automatically on first start:**
+- **Database:** `/config/coursehub.db` (with its `-wal`/`-shm` files) becomes `/config/lyceum.db`.
+- **Backups:** existing `coursehub-backup-*.zip` files are still listed and can be restored.
+- **Per-browser data:** saved settings, offline progress that hasn't synced yet, and lessons downloaded for offline viewing move to the new names the first time each browser opens Lyceum.
+- **Passwords, two-factor setups and API keys keep working.** The encryption keys in `/config/keys` are unchanged.
+
+**Change these yourself:**
+
+| Before | Now |
+| --- | --- |
+| image `ghcr.io/ibn-e-battuta/coursehub` | `ghcr.io/ibn-e-battuta/lyceum` |
+| `CourseHub__…` environment variables | `Lyceum__…` (for example `Lyceum__TrustForwardedHeaders`) |
+| `COURSEHUB_ADMIN_USER` / `COURSEHUB_ADMIN_PASSWORD` | `LYCEUM_ADMIN_USER` / `LYCEUM_ADMIN_PASSWORD` |
+| Prometheus metrics `coursehub_*` | `lyceum_*` |
+| Helm chart `deploy/helm/coursehub`, Unraid template `coursehub.xml` | `deploy/helm/lyceum`, `lyceum.xml` |
+| A `ConnectionStrings__Progress` that names `coursehub.db` | Leave it as is, or rename the file and the setting together |
+
+Everyone is signed out once after upgrading, because the sign-in cookie was renamed.
 
 ## Running from source
 
