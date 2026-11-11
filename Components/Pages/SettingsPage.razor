@@ -654,6 +654,7 @@
             var b = await AppSettings.GetAsync<BackupSettings>();
             (backupOn, backupHour, backupKeep, backupTranscripts) = (b.Enabled, b.Hour, b.Keep, b.IncludeTranscripts);
             allGuestLinks = await Guests.ListAsync(UserId, true);
+            await Tools.EncodersAsync(); // so the encoder list below shows what's really available
         }
         await Refresh();
     }
@@ -841,7 +842,7 @@
         if (goalFailed || Me?.ReminderUrl is null) return;
         var (title, msg, link) = await Reminders.ComposeAsync(Me, force: true);
         var token = (await Users.FindForSignInAsync(UserId))?.ReminderToken;
-        var err = await Reminders.SendAsync(Me.ReminderUrl, token, title ?? "CourseHub", msg ?? "Reminders work. 🎉", link);
+        var err = await Reminders.SendAsync(Me.ReminderUrl, token, title ?? "CourseHub", msg ?? "Reminders work. 🎉", link, allowPrivate: IsAdmin);
         goalFailed = err is not null;
         goalMessage = err is null ? L["Sent. Check your device."] : L["Failed: {0}", err];
     }

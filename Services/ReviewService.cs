@@ -19,7 +19,9 @@ public sealed class ReviewService(IDbContextFactory<ProgressDb> dbFactory, Cours
     public async Task<int> AddAsync(int userId, Course course, Lesson? lesson, IEnumerable<Flashcard> cards)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
-        var existing = (await db.ReviewCards.Where(c => c.UserId == userId).Select(c => c.Front).ToListAsync()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Duplicates are judged within the course: two courses may ask the same question with different answers.
+        var existing = (await db.ReviewCards.Where(c => c.UserId == userId && c.CoursePath == course.FolderName).Select(c => c.Front).ToListAsync())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var added = 0;
         foreach (var card in cards)
         {

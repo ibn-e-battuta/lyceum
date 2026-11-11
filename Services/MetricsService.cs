@@ -16,6 +16,19 @@ public sealed class MetricsService(
     MediaTools tools,
     BackupService backups)
 {
+    // Walking the storage folders is slow on a Pi with thousands of files, and the sizes change slowly,
+    // so scrapes (often every 15 s) reuse a total that's at most five minutes old.
+    private (DateTime At, long Thumbs, long Transcodes, long Transcripts, long Models)? _sizes;
+
+    private (long Thumbs, long Transcodes, long Transcripts, long Models) StorageSizes()
+    {
+        if (_sizes is { } c && DateTime.UtcNow - c.At < TimeSpan.FromMinutes(5)) return (c.Thumbs, c.Transcodes, c.Transcripts, c.Models);
+        static long Size(string dir) => Directory.Exists(dir) ? new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length) : 0;
+        var now = (DateTime.UtcNow, Size(tools.ThumbDir), Size(tools.TranscodeDir), Size(tools.TranscriptDir), Size(tools.ModelDir));
+        _sizes = now;
+        return (now.Item2, now.Item3, now.Item4, now.Item5);
+    }
+
     public async Task<string> RenderAsync()
     {
         var sb = new StringBuilder();
@@ -51,11 +64,11 @@ public sealed class MetricsService(
         Metric("coursehub_transcription_jobs", "gauge", "Transcription jobs by state.", Enum.GetValues<JobState>().Select(s => (L(("state", s.ToString().ToLowerInvariant())), (double)transcripts.Jobs.Count(j => j.State == s))));
         Metric("coursehub_conversion_jobs", "gauge", "Video conversion jobs by state.", Enum.GetValues<JobState>().Select(s => (L(("state", s.ToString().ToLowerInvariant())), (double)transcoder.Jobs.Count(j => j.State == s))));
 
-        static long Size(string dir) => Directory.Exists(dir) ? new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length) : 0;
+        var sizes = StorageSizes();
         Metric("coursehub_storage_bytes", "gauge", "CourseHub's own data by kind.",
         [
-            (L(("kind", "thumbnails")), Size(tools.ThumbDir)), (L(("kind", "transcodes")), Size(tools.TranscodeDir)),
-            (L(("kind", "transcripts")), Size(tools.TranscriptDir)), (L(("kind", "models")), Size(tools.ModelDir)),
+            (L(("kind", "thumbnails")), sizes.Thumbs), (L(("kind", "transcodes")), sizes.Transcodes),
+            (L(("kind", "transcripts")), sizes.Transcripts), (L(("kind", "models")), sizes.Models),
             (L(("kind", "backups")), backups.List().Sum(b => b.Size)),
         ]);
         var lastBackup = backups.List().FirstOrDefault();

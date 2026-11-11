@@ -42,7 +42,7 @@
     <div id="list"></div>
   </main>
   <script type="module">
-    import { list, removeLesson, usage, queueProgress, flushProgress, updatePosition } from "./offline.js";
+    import { list, removeLesson, usage, queueProgress, flushProgress, updatePosition, enforcePolicy } from "./offline.js";
 
     const $ = (id) => document.getElementById(id);
     const fmt = (b) => b > 1e9 ? (b / 1e9).toFixed(1) + " GB" : (b / 1e6).toFixed(0) + " MB";
@@ -52,7 +52,7 @@
     function net() {
       $("net").textContent = navigator.onLine ? "● Online" : "● Offline";
       $("net").className = "status" + (navigator.onLine ? "" : " offline");
-      if (navigator.onLine) flushProgress();
+      if (navigator.onLine) { flushProgress(); enforcePolicy().then((removed) => { if (removed) render(); }); }
     }
     addEventListener("online", net); addEventListener("offline", net); net();
 
@@ -108,7 +108,7 @@
       current.position = v.currentTime;
       queueProgress(current.id, v.currentTime, v.duration, completed);
       updatePosition(current.id, v.currentTime);
-      if (navigator.onLine) flushProgress();
+      if (navigator.onLine) { flushProgress(); enforcePolicy().then((removed) => { if (removed) render(); }); }
     }
     v.addEventListener("timeupdate", () => save(false));
     v.addEventListener("pause", () => save(true));

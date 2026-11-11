@@ -36,37 +36,39 @@ public sealed class MediaTools
         TranscodeDir = Directory.CreateDirectory(Path.Combine(DataDir, "transcodes")).FullName;
         Whisper = Find(options.WhisperPath, "whisper-cli") ?? Find(null, "whisper-cpp");
         logger.LogInformation("ffmpeg: {Ffmpeg}; whisper: {Whisper}", Ffmpeg ?? "not found", Whisper ?? "not found");
+        _ = Task.Run(EncodersAsync); // ready long before anyone opens Settings
     }
 
-    private HashSet<string>? _encoders;
+    private Task<IReadOnlySet<string>>? _encoders;
 
-    /// <summary>Video encoders this ffmpeg build has (h264_vaapi, h264_v4l2m2m…), read once from `ffmpeg -encoders`.</summary>
-    public IReadOnlySet<string> Encoders
+    /// <summary>
+    /// Video encoders this ffmpeg build has (h264_vaapi, h264_v4l2m2m…), read once from `ffmpeg -encoders`.
+    /// Started at startup in the background; pages await <see cref="EncodersAsync"/> instead of blocking a render.
+    /// </summary>
+    public Task<IReadOnlySet<string>> EncodersAsync() => _encoders ??= DetectEncodersAsync();
+
+    /// <summary>The detected encoders, or an empty set while detection is still running.</summary>
+    public IReadOnlySet<string> Encoders => EncodersAsync() is { IsCompletedSuccessfully: true } t ? t.Result : new HashSet<string>();
+
+    private async Task<IReadOnlySet<string>> DetectEncodersAsync()
     {
-        get
+        var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (Ffmpeg is null) return found;
+        try
         {
-            if (_encoders is not null) return _encoders;
-            var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (Ffmpeg is not null)
+            var lines = new List<string>();
+            await RunAsync(Ffmpeg, ["-hide_banner", "-encoders"], TimeSpan.FromSeconds(15), lines.Add).ConfigureAwait(false);
+            foreach (var l in lines)
             {
-                try
-                {
-                    var lines = new List<string>();
-                    // Task.Run: this getter is used while Blazor renders, and blocking on its synchronization context deadlocks.
-                    Task.Run(() => RunAsync(Ffmpeg, ["-hide_banner", "-encoders"], TimeSpan.FromSeconds(15), lines.Add)).GetAwaiter().GetResult();
-                    foreach (var l in lines)
-                    {
-                        var parts = l.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length >= 2 && parts[0].StartsWith('V')) found.Add(parts[1]);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Could not list ffmpeg encoders");
-                }
+                var parts = l.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2 && parts[0].StartsWith('V')) found.Add(parts[1]);
             }
-            return _encoders = found;
         }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not list ffmpeg encoders");
+        }
+        return found;
     }
 
     /// <summary>Hardware-acceleration choices (Settings value → ffmpeg encoder).</summary>

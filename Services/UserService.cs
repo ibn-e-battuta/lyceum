@@ -246,23 +246,32 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
         new Claim(Claims.Guest, user.IsGuest ? "true" : "false"),
     ], CookieAuthenticationDefaults.AuthenticationScheme));
 
-    /// <summary>Rejects cookies for deleted users or after a password/role change.</summary>
+    /// <summary>The user's current sign-in stamp, role and guest expiry (cached); null when the user no longer exists.</summary>
+    private async Task<(string Stamp, bool IsAdmin, DateTime? GuestExpires)?> SessionAsync(int userId)
+    {
+        if (_stamps.TryGetValue(userId, out var current)) return current;
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        if (user is null) return null;
+        current = (user.SecurityStamp, user.IsAdmin, user.IsGuest ? user.GuestExpiresAt ?? DateTime.MinValue : null);
+        _stamps[userId] = current;
+        return current;
+    }
+
+    /// <summary>The stamp to embed in links that act for this user (cast links), so they end with the user's sessions.</summary>
+    public async Task<string?> CurrentStampAsync(int userId) => (await SessionAsync(userId))?.Stamp;
+
+    /// <summary>False after a password/role change, a sign-out everywhere, deletion, or a guest link's expiry.</summary>
+    public async Task<bool> IsSessionValidAsync(int userId, string stamp, bool? isAdmin = null) =>
+        await SessionAsync(userId) is { } s && s.Stamp == stamp && (isAdmin is null || isAdmin == s.IsAdmin)
+        && !(s.GuestExpires is { } expires && expires <= DateTime.UtcNow);
+
+    /// <summary>Rejects cookies for deleted users, after a password/role change, or once a guest link expired.</summary>
     public async Task ValidatePrincipalAsync(CookieValidatePrincipalContext ctx)
     {
         var id = ctx.Principal?.GetUserId();
         var stamp = ctx.Principal?.FindFirstValue(Claims.Stamp);
-        if (id is null || stamp is null) { ctx.RejectPrincipal(); return; }
-        if (!_stamps.TryGetValue(id.Value, out var current))
-        {
-            await using var db = await dbFactory.CreateDbContextAsync();
-            var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id);
-            if (user is null) { ctx.RejectPrincipal(); return; }
-            current = (user.SecurityStamp, user.IsAdmin, user.IsGuest ? user.GuestExpiresAt ?? DateTime.MinValue : null);
-            _stamps[id.Value] = current;
-        }
-        if (current.Stamp != stamp || ctx.Principal!.IsAdmin() != current.IsAdmin) ctx.RejectPrincipal();
-        // Guest links stop working the moment they expire, even with a valid cookie.
-        else if (current.GuestExpires is { } expires && expires <= DateTime.UtcNow) ctx.RejectPrincipal();
+        if (id is null || stamp is null || !await IsSessionValidAsync(id.Value, stamp, ctx.Principal!.IsAdmin())) ctx.RejectPrincipal();
     }
 
     // ---------- management ----------
@@ -375,22 +384,26 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
     {
         if (IsLockedOut(throttleKey)) return false;
         await using var db = await dbFactory.CreateDbContextAsync();
-        var user = await db.Users.FindAsync(userId);
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null || !user.TotpEnabled || user.TotpSecret is null) return false;
+
+        // Each code is consumed with one conditional UPDATE, so two requests racing with the same
+        // code (or the same recovery code) can't both win: the second finds the row already changed.
         var ok = false;
         if (TotpService.Verify(totp.Unprotect(user.TotpSecret), code, user.TotpLastStep) is { } step)
         {
-            user.TotpLastStep = step;
-            ok = true;
+            ok = await db.Users.Where(u => u.Id == userId && u.TotpLastStep < step)
+                .ExecuteUpdateAsync(x => x.SetProperty(u => u.TotpLastStep, step).SetProperty(u => u.LastLoginAt, DateTime.UtcNow)) == 1;
         }
         else if (user.RecoveryCodes is { Length: > 0 } stored)
         {
             var hashes = stored.Split(';').ToList();
             if (hashes.Remove(TotpService.HashRecovery(code)))
             {
-                user.RecoveryCodes = string.Join(';', hashes);
-                ok = true;
-                logger.LogWarning("User {User} signed in with a recovery code ({Left} left)", user.Username, hashes.Count);
+                var remaining = string.Join(';', hashes);
+                ok = await db.Users.Where(u => u.Id == userId && u.RecoveryCodes == stored)
+                    .ExecuteUpdateAsync(x => x.SetProperty(u => u.RecoveryCodes, remaining).SetProperty(u => u.LastLoginAt, DateTime.UtcNow)) == 1;
+                if (ok) logger.LogWarning("User {User} signed in with a recovery code ({Left} left)", user.Username, hashes.Count);
             }
         }
         if (!ok)
@@ -400,8 +413,6 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
             return false;
         }
         _failures.TryRemove(throttleKey, out _);
-        user.LastLoginAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
         return true;
     }
 

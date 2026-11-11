@@ -184,9 +184,12 @@ else
                 {
                     <span class="kid-timer" title="@L["Time left today"]">⏳ @L["{0} min left today", (int)Math.Ceiling(left / 60)]</span>
                 }
-                <button class="btn ghost" title="@L["Keep a copy on this device to watch without internet"]" disabled="@(videoSrc is null || offlineProgress is not null)" @onclick="ToggleOffline">
-                    @(offlineSaved ? "✓ " + L["Saved offline"] : offlineProgress is { } op ? L["Saving… {0}%", op] : "⬇ " + L["Save offline"])
-                </button>
+                @if (CanSaveOffline)
+                {
+                    <button class="btn ghost" title="@L["Keep a copy on this device to watch without internet"]" disabled="@(videoSrc is null || offlineProgress is not null)" @onclick="ToggleOffline">
+                        @(offlineSaved ? "✓ " + L["Saved offline"] : offlineProgress is { } op ? L["Saving… {0}%", op] : "⬇ " + L["Save offline"])
+                    </button>
+                }
                 <label class="toggle">
                     <input type="checkbox" @bind="autoplay" @bind:after="SaveAutoplay" /> @L["Autoplay next"]
                 </label>
@@ -295,11 +298,14 @@ else
                 }
             </div>
         }
-        <div class="curriculum-foot">
-            <button class="btn ghost small" @onclick="SaveCourseOffline" disabled="@(courseOffline is not null)">
-                @(courseOffline is { } co ? L["Saving course… {0}", co] : "⬇ " + L["Save whole course offline"])
-            </button>
-        </div>
+        @if (CanSaveOffline)
+        {
+            <div class="curriculum-foot">
+                <button class="btn ghost small" @onclick="SaveCourseOffline" disabled="@(courseOffline is not null)">
+                    @(courseOffline is { } co ? L["Saving course… {0}", co] : "⬇ " + L["Save whole course offline"])
+                </button>
+            </div>
+        }
     </aside>
 </div>
 }
@@ -359,6 +365,8 @@ else
     private string? castError;
     private double? kidRemaining;
     private bool timeUp;
+    /// <summary>Downloads play without the server, so they'd skip a kid's daily limit and a guest link's expiry.</summary>
+    private bool CanSaveOffline => !IsKid && !IsGuest;
     private string? AudioUrl => lesson is not null && Transcoder.PreparedFile(lesson, PlaybackVariant.Audio) is not null ? $"{lesson.MediaUrl}?v=audio" : null;
     /// <summary>Listening mode only switches once the audio file is ready; until then the video keeps playing.</summary>
     private bool AudioActive => audioMode && AudioUrl is not null && !timeUp;
@@ -1437,7 +1445,7 @@ else
 
     private async Task ToggleOffline()
     {
-        if (offline is null || lesson is null || videoSrc is null) return;
+        if (offline is null || lesson is null || videoSrc is null || !CanSaveOffline) return;
         if (offlineSaved)
         {
             await offline.InvokeVoidAsync("removeLesson", lesson.Id);
@@ -1450,7 +1458,7 @@ else
 
     private async Task SaveCourseOffline()
     {
-        if (offline is null || course is null) return;
+        if (offline is null || course is null || !CanSaveOffline) return;
         // Use the playable copy we know about: a prepared conversion if one exists, else the original.
         var items = lessons.Where(l => l.Kind == LessonKind.Video).Select(l =>
         {
@@ -1529,7 +1537,8 @@ else
             castError = L["Casting needs an address your Chromecast can reach. Open CourseHub by its network address, or set the public address in Settings → Notifications."];
             return;
         }
-        var token = Uri.EscapeDataString(CastTokens.Create(UserId, lesson, course));
+        if (await CastTokens.CreateAsync(UserId, lesson, course) is not { } rawToken) return;
+        var token = Uri.EscapeDataString(rawToken);
         string Signed(string path) => origin + path + (path.Contains('?') ? "&" : "?") + "cast=" + token;
         var position = module is null ? 0 : await module.InvokeAsync<double>("getTime");
         if (module is not null) await module.InvokeVoidAsync("pause");

@@ -356,13 +356,13 @@ public sealed partial class AiService(
         var cfg = await settings.GetAsync<AiSettings>();
         if (!cfg.Enabled || string.IsNullOrWhiteSpace(cfg.EmbeddingModel)) return null;
 
-        var paths = course.AllLessons.Select(l => l.RelativePath).ToList();
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var stored = await db.Embeddings.AsNoTracking().Where(e => e.Model == cfg.EmbeddingModel && paths.Contains(e.LessonPath)).ToListAsync();
-        var byKey = stored.GroupBy(e => (e.LessonPath, Math.Round(e.Start, 1))).ToDictionary(g => g.Key, g => g.First());
-        var missing = passages.Count(p => !byKey.ContainsKey((p.Lesson.RelativePath, Math.Round(p.Start, 1))));
+        var byKey = await VectorsAsync(course, cfg.EmbeddingModel!);
+        // A vector only counts for the passage it was made from: a re-transcribed lesson keeps its times but not its words.
+        float[]? VectorFor((Lesson Lesson, double Start, string Text) p) =>
+            byKey.TryGetValue((p.Lesson.RelativePath, Math.Round(p.Start, 1)), out var e) && e.Text == p.Text ? e.Vector : null;
+        var missing = passages.Count(p => VectorFor(p) is null);
         if (missing > 0) _ = IndexCourseAsync(course); // keep improving in the background
-        if (byKey.Count == 0) return null;
+        if (missing == passages.Count) return null;
 
         float[] q;
         try { q = (await EmbedAsync([question]))[0]; }
@@ -371,7 +371,22 @@ public sealed partial class AiService(
             logger.LogWarning(ex, "Embedding the question failed; using keyword search");
             return null;
         }
-        return passages.Select(p => byKey.TryGetValue((p.Lesson.RelativePath, Math.Round(p.Start, 1)), out var e) ? Cosine(q, ToFloats(e.Vector)) : 0).ToArray();
+        return passages.Select(p => VectorFor(p) is { } v ? Cosine(q, v) : 0).ToArray();
+    }
+
+    // Decoded vectors per course, so a question doesn't re-read and re-decode the whole index. Cleared when indexing changes it.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Model, Dictionary<(string, double), (string Text, float[] Vector)> Vectors)> _vectors = new();
+
+    private async Task<Dictionary<(string, double), (string Text, float[] Vector)>> VectorsAsync(Course course, string model)
+    {
+        if (_vectors.TryGetValue(course.Id, out var cached) && cached.Model == model) return cached.Vectors;
+        var paths = course.AllLessons.Select(l => l.RelativePath).ToList();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var stored = await db.Embeddings.AsNoTracking().Where(e => e.Model == model && paths.Contains(e.LessonPath)).ToListAsync();
+        var vectors = stored.GroupBy(e => (e.LessonPath, Math.Round(e.Start, 1)))
+            .ToDictionary(g => g.Key, g => (g.First().Text, ToFloats(g.First().Vector)));
+        _vectors[course.Id] = (model, vectors);
+        return vectors;
     }
 
     public async Task<List<float[]>> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct = default)
@@ -408,13 +423,22 @@ public sealed partial class AiService(
         {
             var passages = await PassagesAsync(course);
             var paths = course.AllLessons.Select(l => l.RelativePath).ToList();
-            HashSet<(string, double)> have;
+            HashSet<(string, double, string)> have;
             await using (var db = await dbFactory.CreateDbContextAsync())
             {
-                have = (await db.Embeddings.AsNoTracking().Where(e => e.Model == cfg.EmbeddingModel && paths.Contains(e.LessonPath))
-                    .Select(e => new { e.LessonPath, e.Start }).ToListAsync()).Select(e => (e.LessonPath, Math.Round(e.Start, 1))).ToHashSet();
+                // Drop vectors whose passage changed or is gone (re-transcribed lessons, removed lessons, another model).
+                var current = passages.Select(p => (p.Lesson.RelativePath, Math.Round(p.Start, 1), p.Text)).ToHashSet();
+                var rows = await db.Embeddings.Where(e => paths.Contains(e.LessonPath))
+                    .Select(e => new { e.Id, e.LessonPath, e.Start, e.Text, e.Model }).ToListAsync();
+                var stale = rows.Where(e => e.Model == cfg.EmbeddingModel && !current.Contains((e.LessonPath, Math.Round(e.Start, 1), e.Text))).Select(e => e.Id).ToList();
+                if (stale.Count > 0)
+                {
+                    await db.Embeddings.Where(e => stale.Contains(e.Id)).ExecuteDeleteAsync(ct);
+                    _vectors.TryRemove(course.Id, out _);
+                }
+                have = rows.Where(e => e.Model == cfg.EmbeddingModel && !stale.Contains(e.Id)).Select(e => (e.LessonPath, Math.Round(e.Start, 1), e.Text)).ToHashSet();
             }
-            var todo = passages.Where(p => !have.Contains((p.Lesson.RelativePath, Math.Round(p.Start, 1)))).ToList();
+            var todo = passages.Where(p => !have.Contains((p.Lesson.RelativePath, Math.Round(p.Start, 1), p.Text))).ToList();
             var done = 0;
             _indexing[course.Id] = (0, todo.Count);
             foreach (var batch in todo.Chunk(16))
@@ -427,6 +451,7 @@ public sealed partial class AiService(
                         LessonPath = batch[i].Lesson.RelativePath, Start = batch[i].Start, Text = batch[i].Text, Model = cfg.EmbeddingModel!, Vector = ToBytes(vectors[i]),
                     });
                 await db.SaveChangesAsync(ct);
+                _vectors.TryRemove(course.Id, out _);
                 done += batch.Length;
                 _indexing[course.Id] = (done, todo.Count);
             }

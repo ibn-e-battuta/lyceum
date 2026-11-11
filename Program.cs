@@ -317,13 +317,17 @@ async Task<Course?> AccessibleCourse(ClaimsPrincipal user, Course? course, UserS
     course is not null && user.GetUserId() is { } id && CourseLibrary.CanAccess(course, await users.ScopeAsync(id)) ? course : null;
 
 // Streams lesson files with HTTP range support so videos can seek. ?v=remux|h264 serves a converted copy.
-app.MapGet("/media/{id}", async (string id, string? v, ClaimsPrincipal user, CourseLibrary lib, UserService users, Transcoder transcoder, WatchTimeService watch) =>
+app.MapGet("/media/{id}", async (string id, string? v, HttpContext ctx, ClaimsPrincipal user, CourseLibrary lib, UserService users, Transcoder transcoder, WatchTimeService watch) =>
 {
     var lesson = lib.GetLesson(id);
     if (lesson is null || await AccessibleCourse(user, lib.CourseOf(lesson), users) is null || !File.Exists(lesson.FullPath)) return Results.NotFound();
     // Kids' daily limit is enforced here too, so it can't be bypassed by opening the file directly.
-    if (await users.GetAsync(user.GetUserId()!.Value) is { IsKid: true } kid && await watch.RemainingAsync(kid) is <= 0)
+    var viewer = await users.GetAsync(user.GetUserId()!.Value);
+    if (viewer is { IsKid: true } kid && await watch.RemainingAsync(kid) is <= 0)
         return Results.Problem("Time's up for today.", statusCode: StatusCodes.Status403Forbidden);
+    // Downloads would play without these checks, so kids' and guest accounts can't make them.
+    if (viewer is { IsKid: true } or { IsGuest: true } && ctx.Request.Headers.ContainsKey("X-CourseHub-Offline"))
+        return Results.Problem("This account can't save lessons offline.", statusCode: StatusCodes.Status403Forbidden);
     if (v is "remux" or "h264" or "audio")
     {
         var variant = v switch { "remux" => PlaybackVariant.Remux, "audio" => PlaybackVariant.Audio, _ => PlaybackVariant.H264 };
@@ -335,6 +339,10 @@ app.MapGet("/media/{id}", async (string id, string? v, ClaimsPrincipal user, Cou
     if (!contentTypes.TryGetContentType(lesson.FullPath, out var type)) type = "application/octet-stream";
     return TypedResults.PhysicalFile(lesson.FullPath, type, enableRangeProcessing: true);
 });
+
+// The Downloads page asks this when online, and clears its downloads for accounts that may not keep any.
+app.MapGet("/api/offline/policy", async (ClaimsPrincipal user, UserService users) =>
+    Results.Ok(new { allowed = await users.GetAsync(user.GetUserId()!.Value) is not ({ IsKid: true } or { IsGuest: true }) }));
 
 app.MapPost("/api/media/{id}/prepare", async (string id, string variant, ClaimsPrincipal user, CourseLibrary lib, UserService users, Transcoder transcoder) =>
 {

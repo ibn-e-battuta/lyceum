@@ -30,7 +30,8 @@ export async function usage() {
 }
 
 async function download(meta, onProgress) {
-  const res = await fetch(meta.url, { credentials: "same-origin" });
+  // The header tells the server this is a download, which kids' and guest accounts may not make.
+  const res = await fetch(meta.url, { credentials: "same-origin", headers: { "X-CourseHub-Offline": "1" } });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   const total = Number(res.headers.get("Content-Length")) || 0;
   const type = res.headers.get("Content-Type") || "video/mp4";
@@ -102,6 +103,18 @@ export async function removeLesson(id) {
   const index = await readIndex();
   delete index[id];
   await writeIndex(index);
+}
+
+/** Deletes every download when the signed-in account may not keep any (kids and guests). Only runs online. */
+export async function enforcePolicy() {
+  if (!navigator.onLine) return false;
+  try {
+    const r = await fetch("api/offline/policy", { credentials: "same-origin" });
+    if (!r.ok) return false;
+    if ((await r.json()).allowed !== false) return false;
+  } catch { return false; }
+  for (const id of Object.keys(await readIndex())) await removeLesson(id);
+  return true;
 }
 
 export async function updatePosition(id, position) {

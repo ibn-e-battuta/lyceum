@@ -61,7 +61,18 @@ public sealed class GuestService(IDbContextFactory<ProgressDb> dbFactory, UserSe
     }
 
     /// <summary>Validates a token and returns the guest account to sign in as (created on first use).</summary>
+    // One redemption at a time: two first visits at once (a chat app's link preview plus the real click)
+    // would otherwise each create a guest account, and only one would ever be cleaned up.
+    private readonly SemaphoreSlim _redeemGate = new(1, 1);
+
     public async Task<(AppUser? User, GuestLink? Link)> RedeemAsync(string token)
+    {
+        await _redeemGate.WaitAsync();
+        try { return await RedeemCoreAsync(token); }
+        finally { _redeemGate.Release(); }
+    }
+
+    private async Task<(AppUser? User, GuestLink? Link)> RedeemCoreAsync(string token)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
         var link = await db.GuestLinks.FirstOrDefaultAsync(g => g.TokenHash == Hash(token));

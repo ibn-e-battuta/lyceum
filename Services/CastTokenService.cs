@@ -9,19 +9,21 @@ namespace CourseHub.Services;
 /// Signed, short-lived media URLs for devices that can't send the sign-in cookie (Chromecast).
 /// A token is bound to one user and one lesson and only opens that lesson's video, subtitles and images.
 /// </summary>
-public sealed class CastTokenService(IDataProtectionProvider dataProtection)
+public sealed class CastTokenService(IDataProtectionProvider dataProtection, UserService users)
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromHours(6);
     private readonly ITimeLimitedDataProtector _protector = dataProtection.CreateProtector("CourseHub.Cast.v1").ToTimeLimitedDataProtector();
 
-    public string Create(int userId, Lesson lesson, Course course) => _protector.Protect($"{userId}|{lesson.Id}|{course.Id}", Lifetime);
+    /// <summary>The token carries the user's sign-in stamp, so signing out everywhere (or a guest link expiring) also ends casting.</summary>
+    public async Task<string?> CreateAsync(int userId, Lesson lesson, Course course) =>
+        await users.CurrentStampAsync(userId) is { } stamp ? _protector.Protect($"{userId}|{lesson.Id}|{course.Id}|{stamp}", Lifetime) : null;
 
-    public (int UserId, string LessonId, string CourseId)? Read(string token)
+    public (int UserId, string LessonId, string CourseId, string Stamp)? Read(string token)
     {
         try
         {
             var p = _protector.Unprotect(token).Split('|');
-            return (int.Parse(p[0]), p[1], p[2]);
+            return p.Length == 4 ? (int.Parse(p[0]), p[1], p[2], p[3]) : null;
         }
         catch
         {
@@ -51,6 +53,7 @@ public sealed class CastTokenAuthHandler(
         var allowed = path == $"/media/{t.LessonId}" || path == $"/subs/{t.LessonId}.vtt" || path == $"/thumb/{t.LessonId}" || path == $"/cover/{t.CourseId}";
         if (!allowed) return AuthenticateResult.Fail("This cast link is for a different file.");
 
+        if (!await users.IsSessionValidAsync(t.UserId, t.Stamp)) return AuthenticateResult.Fail("This cast link is no longer valid.");
         var user = await users.GetAsync(t.UserId);
         if (user is null) return AuthenticateResult.Fail("User not found.");
         // The Chromecast receiver loads subtitles with CORS.
