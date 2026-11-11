@@ -16,6 +16,9 @@ public sealed record TranscriptJob(string LessonId, string Title, JobState State
 
 public sealed record TranscriptHit(Course Course, Lesson Lesson, double Start, string Text);
 
+/// <summary>A caption track: the original transcript, or a translation.</summary>
+public sealed record CaptionTrack(string Language, string Label, string File, bool IsOriginal);
+
 /// <summary>
 /// Subtitles and transcripts: reads .srt/.vtt files next to videos, generates new ones with
 /// whisper.cpp in the background, and indexes every cue so transcripts are searchable.
@@ -23,6 +26,7 @@ public sealed record TranscriptHit(Course Course, Lesson Lesson, double Start, s
 public sealed partial class TranscriptService(
     CourseLibrary library,
     MediaTools tools,
+    AppSettingsService settings,
     IDbContextFactory<ProgressDb> dbFactory,
     IHttpClientFactory httpFactory,
     ILogger<TranscriptService> logger) : BackgroundService
@@ -34,6 +38,9 @@ public sealed partial class TranscriptService(
     private CancellationTokenSource? _currentJob;
 
     public event Action? Changed;
+    /// <summary>Raised when the queue empties, with the number of lessons finished since it last did.</summary>
+    public event Action<int>? QueueDrained;
+    private int _doneSinceDrain;
 
     public IReadOnlyCollection<TranscriptJob> Jobs => _jobs.Values.OrderBy(j => j.State == JobState.Running ? 0 : j.State == JobState.Queued ? 1 : 2).ThenByDescending(j => j.UpdatedAt).ToList();
     public TranscriptJob? JobFor(Lesson lesson) => _jobs.GetValueOrDefault(lesson.Id);
@@ -53,6 +60,68 @@ public sealed partial class TranscriptService(
 
     public bool HasTranscript(Lesson lesson) => SubtitleFile(lesson) is not null;
 
+    public string TranslationPath(Lesson lesson, string language) => Path.Combine(tools.TranscriptDir, $"{lesson.Id}.{language}.vtt");
+
+    /// <summary>Language of the original transcript ("de", "en"…), when known.</summary>
+    public string? OriginalLanguage(Lesson lesson)
+    {
+        var file = SubtitleFile(lesson);
+        if (file is null) return null;
+        var marker = file + ".lang";
+        if (File.Exists(marker)) return File.ReadAllText(marker).Trim();
+        // Transcripts generated before language detection existed were always English.
+        if (file.StartsWith(tools.TranscriptDir, StringComparison.Ordinal)) return "en";
+        // Sidecar files named "Lesson.de.srt"
+        var parts = Path.GetFileNameWithoutExtension(file).Split('.');
+        return parts.Length > 1 && parts[^1].Length is 2 or 3 ? parts[^1].ToLowerInvariant() : null;
+    }
+
+    public IReadOnlyList<CaptionTrack> Tracks(Lesson lesson)
+    {
+        var original = SubtitleFile(lesson);
+        if (original is null) return [];
+        var lang = OriginalLanguage(lesson) ?? "und";
+        var tracks = new List<CaptionTrack> { new(lang, LanguageName(lang) + (lang == "und" ? "" : " (original)"), original, true) };
+        foreach (var f in Directory.EnumerateFiles(tools.TranscriptDir, lesson.Id + ".*.vtt"))
+        {
+            var code = Path.GetFileNameWithoutExtension(f)[(lesson.Id.Length + 1)..];
+            if (code != lang) tracks.Add(new CaptionTrack(code, LanguageName(code), f, false));
+        }
+        return tracks;
+    }
+
+    public static string LanguageName(string code)
+    {
+        if (code == "und") return "Transcript";
+        try { return System.Globalization.CultureInfo.GetCultureInfo(code).EnglishName; }
+        catch (System.Globalization.CultureNotFoundException) { return code; }
+    }
+
+    public IReadOnlyList<Cue> GetCues(Lesson lesson, string? language)
+    {
+        if (language is null) return GetCues(lesson);
+        var track = Tracks(lesson).FirstOrDefault(t => t.Language == language);
+        return track is null ? GetCues(lesson) : CuesFrom(track.File);
+    }
+
+    private IReadOnlyList<Cue> CuesFrom(string file)
+    {
+        var ticks = File.GetLastWriteTimeUtc(file).Ticks;
+        if (_cueCache.TryGetValue(file, out var c) && c.Ticks == ticks) return c.Cues;
+        var cues = Parse(File.ReadAllText(file));
+        _cueCache[file] = (ticks, cues);
+        return cues;
+    }
+
+    public async Task SaveTranslationAsync(Lesson lesson, string language, IReadOnlyList<Cue> cues)
+    {
+        var sb = new StringBuilder("WEBVTT\n\n");
+        foreach (var cue in cues)
+            sb.Append(Stamp(cue.Start)).Append(" --> ").Append(Stamp(cue.End)).Append('\n').Append(cue.Text).Append("\n\n");
+        await File.WriteAllTextAsync(TranslationPath(lesson, language), sb.ToString());
+        Changed?.Invoke();
+    }
+
     public IReadOnlyList<Cue> GetCues(Lesson lesson)
     {
         var file = SubtitleFile(lesson);
@@ -64,9 +133,9 @@ public sealed partial class TranscriptService(
         return cues;
     }
 
-    public string? ToVtt(Lesson lesson)
+    public string? ToVtt(Lesson lesson, string? language = null)
     {
-        var cues = GetCues(lesson);
+        var cues = GetCues(lesson, language);
         if (cues.Count == 0) return null;
         var sb = new StringBuilder("WEBVTT\n\n");
         foreach (var cue in cues)
@@ -114,7 +183,7 @@ public sealed partial class TranscriptService(
 
     // ---------- search ----------
 
-    public async Task<List<TranscriptHit>> SearchAsync(string query, int limit = 40)
+    public async Task<List<TranscriptHit>> SearchAsync(string query, IReadOnlySet<int>? allowedLibraries, int limit = 40)
     {
         query = query.Trim();
         if (query.Length < 3) return [];
@@ -128,7 +197,7 @@ public sealed partial class TranscriptService(
         var hits = new List<TranscriptHit>();
         foreach (var r in rows)
         {
-            if (library.FindByPath(r.LessonPath) is not { } x) continue;
+            if (library.FindByPath(r.LessonPath) is not { } x || !CourseLibrary.CanAccess(x.Course, allowedLibraries)) continue;
             // At most 3 hits per lesson so one lecture doesn't fill the page.
             if (hits.Count(h => h.Lesson.Id == x.Lesson.Id) >= 3) continue;
             hits.Add(new TranscriptHit(x.Course, x.Lesson, r.Start, r.Text));
@@ -171,7 +240,10 @@ public sealed partial class TranscriptService(
 
     private async Task IndexAsync(Lesson lesson, string file, long ticks)
     {
-        var cues = GetCues(lesson);
+        var cues = GetCues(lesson).ToList();
+        // Non-English lessons: also index the English translation so they show up in English searches.
+        var english = TranslationPath(lesson, "en");
+        if (File.Exists(english) && OriginalLanguage(lesson) is { } l && l != "en") cues.AddRange(CuesFrom(english));
         await using var db = await dbFactory.CreateDbContextAsync();
         await db.Cues.Where(c => c.LessonPath == lesson.RelativePath).ExecuteDeleteAsync();
         db.Cues.AddRange(cues.Select(c => new TranscriptCue { LessonPath = lesson.RelativePath, Start = c.Start, End = c.End, Text = c.Text }));
@@ -214,6 +286,14 @@ public sealed partial class TranscriptService(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         library.Changed += () => _ = IndexAllAsync();
+        library.Diff += async diff =>
+        {
+            if (!(await settings.GetAsync<ServerSettings>()).AutoTranscribeNewVideos || !tools.CanTranscribe) return;
+            var n = diff.AddedLessons.Count(x => Enqueue(x.Lesson));
+            if (n > 0) logger.LogInformation("Queued {Count} new lessons for transcription", n);
+        };
+        await ApplySettingsAsync();
+        settings.Changed += () => _ = ApplySettingsAsync();
         try { await IndexAllAsync(); } catch (Exception ex) { logger.LogWarning(ex, "Initial transcript indexing failed"); }
 
         await foreach (var lessonId in _queue.Reader.ReadAllAsync(stoppingToken))
@@ -227,6 +307,7 @@ public sealed partial class TranscriptService(
             {
                 await TranscribeAsync(lesson, _currentJob.Token);
                 Update(lesson, JobState.Done, 100, null);
+                _doneSinceDrain++;
             }
             catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
             {
@@ -241,8 +322,21 @@ public sealed partial class TranscriptService(
             {
                 _currentJob = null;
                 Changed?.Invoke();
+                if (_queue.Reader.Count == 0 && !_jobs.Values.Any(j => j.State == JobState.Queued) && _doneSinceDrain > 0)
+                {
+                    var n = _doneSinceDrain;
+                    _doneSinceDrain = 0;
+                    try { QueueDrained?.Invoke(n); } catch (Exception ex) { logger.LogWarning(ex, "QueueDrained handler failed"); }
+                }
             }
         }
+    }
+
+    private async Task ApplySettingsAsync()
+    {
+        var s = await settings.GetAsync<ServerSettings>();
+        tools.ModelOverride = s.WhisperModel;
+        tools.LanguageOverride = s.WhisperLanguage;
     }
 
     private void Update(Lesson lesson, JobState state, int percent, string? error)
@@ -265,20 +359,24 @@ public sealed partial class TranscriptService(
             ], TimeSpan.FromMinutes(20), ct: ct);
             if (code != 0) throw new InvalidOperationException("ffmpeg could not extract audio: " + err.Trim());
 
-            var outBase = Path.Combine(work, "out");
-            var threads = Math.Clamp(Environment.ProcessorCount - 2, 2, 8);
-            (code, err) = await MediaTools.RunAsync(tools.Whisper!, [
-                "-m", tools.ModelPath, "-f", wav, "-l", tools.Language, "-t", threads.ToString(), "-ovtt", "-of", outBase, "-pp",
-            ], TimeSpan.FromHours(3), line =>
-            {
-                var m = Progress().Match(line);
-                if (m.Success) Update(lesson, JobState.Running, int.Parse(m.Groups[1].Value), null);
-            }, ct);
-            if (code != 0 || !File.Exists(outBase + ".vtt"))
-                throw new InvalidOperationException("whisper-cli failed: " + err.Trim().Split('\n').LastOrDefault());
+            var language = tools.ModelIsMultilingual ? tools.Language : "en";
+            var translate = (await settings.GetAsync<ServerSettings>()).TranslateToEnglish && tools.ModelIsMultilingual;
+            string? detected = language == "auto" ? null : language;
 
+            // Pass 1: transcript in the spoken language. Pass 2 (optional): Whisper's own translation to English.
+            var outBase = Path.Combine(work, "out");
+            await RunWhisperAsync(lesson, wav, outBase, language, translate: false, translate ? 0 : 0, translate ? 50 : 100,
+                l => detected ??= l, ct);
             var target = GeneratedPath(lesson);
             File.Move(outBase + ".vtt", target, overwrite: true);
+            await File.WriteAllTextAsync(target + ".lang", detected ?? "en", ct);
+
+            if (translate && detected is not null && detected != "en")
+            {
+                var enBase = Path.Combine(work, "en");
+                await RunWhisperAsync(lesson, wav, enBase, detected, translate: true, 50, 100, _ => { }, ct);
+                File.Move(enBase + ".vtt", TranslationPath(lesson, "en"), overwrite: true);
+            }
             await IndexAsync(lesson, target, File.GetLastWriteTimeUtc(target).Ticks);
         }
         finally
@@ -287,10 +385,30 @@ public sealed partial class TranscriptService(
         }
     }
 
+    private async Task RunWhisperAsync(Lesson lesson, string wav, string outBase, string language, bool translate,
+        int fromPercent, int toPercent, Action<string> onDetected, CancellationToken ct)
+    {
+        var threads = Math.Clamp(Environment.ProcessorCount - 2, 2, 8);
+        var args = new List<string> { "-m", tools.ModelPath, "-f", wav, "-l", language, "-t", threads.ToString(), "-ovtt", "-of", outBase, "-pp" };
+        if (translate) args.Add("-tr");
+        var (code, err) = await MediaTools.RunAsync(tools.Whisper!, args, TimeSpan.FromHours(3), line =>
+        {
+            var m = Progress().Match(line);
+            if (m.Success) Update(lesson, JobState.Running, fromPercent + int.Parse(m.Groups[1].Value) * (toPercent - fromPercent) / 100, null);
+            var d = Detected().Match(line);
+            if (d.Success) onDetected(d.Groups[1].Value);
+        }, ct);
+        if (code != 0 || !File.Exists(outBase + ".vtt"))
+            throw new InvalidOperationException("whisper-cli failed: " + err.Trim().Split('\n').LastOrDefault());
+    }
+
+    [GeneratedRegex(@"auto-detected language:\s*([a-z]{2,3})")] private static partial Regex Detected();
+
     // ---------- model download ----------
 
     public async Task DownloadModelAsync()
     {
+        tools.ModelOverride = (await settings.GetAsync<ServerSettings>()).WhisperModel;
         if (ModelDownload is { Error: null, Percent: < 100 }) return; // already running
         ModelDownload = (0, 0, null);
         Changed?.Invoke();

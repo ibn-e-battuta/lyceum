@@ -1,34 +1,58 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 using System.Security.Claims;
 using System.Text;
+using CourseHub.Api;
 using CourseHub.Components;
 using CourseHub.Data;
 using CourseHub.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 var builder = WebApplication.CreateBuilder(args);
 
 var hubOptions = builder.Configuration.GetSection("CourseHub").Get<CourseHubOptions>() ?? new CourseHubOptions();
 var toolOptions = builder.Configuration.GetSection("MediaTools").Get<MediaToolsOptions>() ?? new MediaToolsOptions();
+var oidc = builder.Configuration.GetSection("Oidc").Get<OidcOptions>() ?? new OidcOptions();
 builder.Services.AddSingleton(hubOptions);
 builder.Services.AddSingleton(toolOptions);
+builder.Services.AddSingleton(oidc);
+builder.Services.AddSingleton<AppSettingsService>();
+builder.Services.AddSingleton<MediaTools>();
+builder.Services.AddSingleton<MediaProbe>();
 builder.Services.AddSingleton<CourseLibrary>();
 builder.Services.AddSingleton<ProgressService>();
 builder.Services.AddSingleton<UserDataService>();
 builder.Services.AddSingleton<StatsService>();
 builder.Services.AddSingleton<UserService>();
-builder.Services.AddSingleton<MediaTools>();
+builder.Services.AddSingleton<ActivityService>();
+builder.Services.AddSingleton<ApiKeyService>();
+builder.Services.AddSingleton<PresenceService>();
 builder.Services.AddSingleton<CodeBrowser>();
+builder.Services.AddSingleton<AiService>();
+builder.Services.AddSingleton<Localizer>();
 builder.Services.AddSingleton<TranscriptService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TranscriptService>());
+builder.Services.AddSingleton<Transcoder>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<Transcoder>());
+builder.Services.AddSingleton<NotificationService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<NotificationService>());
 builder.Services.AddHttpClient();
+builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
+{
+    doc.Info.Title = "CourseHub API";
+    doc.Info.Description = "Authenticate with `Authorization: Bearer <API key>` (create keys in Settings → API keys).";
+    return Task.CompletedTask;
+}));
 
 // ---------- database ----------
 
@@ -43,7 +67,17 @@ builder.Services.AddDbContextFactory<ProgressDb>(o => o.UseSqlite(connectionStri
 var keysDir = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, hubOptions.KeysFolder));
 builder.Services.AddDataProtection().SetApplicationName("CourseHub").PersistKeysToFileSystem(Directory.CreateDirectory(keysDir));
 
-builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+const string SmartScheme = "CookieOrApiKey";
+const string ExternalScheme = "External";
+var auth = builder.Services.AddAuthentication(o =>
+    {
+        o.DefaultScheme = SmartScheme;
+        o.DefaultChallengeScheme = SmartScheme;
+    })
+    // Requests with an API key use it; everything else uses the browser cookie.
+    .AddPolicyScheme(SmartScheme, "Cookie or API key", o =>
+        o.ForwardDefaultSelector = ctx => ApiKeyAuthHandler.KeyFrom(ctx.Request) is not null ? ApiKeyAuthHandler.SchemeName : CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthHandler>(ApiKeyAuthHandler.SchemeName, null)
     .AddCookie(o =>
     {
         o.Cookie.Name = "coursehub.auth";
@@ -54,7 +88,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         o.ExpireTimeSpan = TimeSpan.FromDays(60);
         o.SlidingExpiration = true;
         o.Events.OnValidatePrincipal = ctx => ctx.HttpContext.RequestServices.GetRequiredService<UserService>().ValidatePrincipalAsync(ctx);
-        // API/media requests get a 401 instead of an HTML redirect.
+        // API/media requests get status codes instead of HTML redirects.
         o.Events.OnRedirectToLogin = ctx =>
         {
             if (IsApiRequest(ctx.Request)) ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -68,9 +102,49 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
             return Task.CompletedTask;
         };
     });
+
+if (oidc.Enabled)
+{
+    // Single sign-on: the provider signs into a short-lived "External" cookie, then /auth/oidc/complete
+    // links it to a CourseHub account and issues the normal cookie.
+    auth.AddCookie(ExternalScheme, o =>
+    {
+        o.Cookie.Name = "coursehub.external";
+        o.ExpireTimeSpan = TimeSpan.FromMinutes(10);
+    });
+    auth.AddOpenIdConnect(OidcOptions.Scheme, oidc.DisplayName, o =>
+    {
+        o.SignInScheme = ExternalScheme;
+        o.Authority = oidc.Authority;
+        o.ClientId = oidc.ClientId;
+        o.ClientSecret = oidc.ClientSecret;
+        o.ResponseType = OpenIdConnectResponseType.Code;
+        // Query-mode callback + Lax cookies: works over plain http on a LAN as well as behind https
+        // (the default form_post needs SameSite=None cookies, which browsers reject without https).
+        o.ResponseMode = OpenIdConnectResponseMode.Query;
+        o.CorrelationCookie.SameSite = SameSiteMode.Lax;
+        o.NonceCookie.SameSite = SameSiteMode.Lax;
+        o.UsePkce = true;
+        o.SaveTokens = false;
+        o.GetClaimsFromUserInfoEndpoint = true;
+        o.MapInboundClaims = false;
+        o.RequireHttpsMetadata = oidc.RequireHttpsMetadata;
+        o.CallbackPath = "/signin-oidc";
+        o.Scope.Clear();
+        foreach (var scope in oidc.Scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries)) o.Scope.Add(scope);
+        o.ClaimActions.MapAll(); // keep groups and other custom claims from the userinfo endpoint
+        o.Events.OnRemoteFailure = ctx =>
+        {
+            ctx.Response.Redirect("/login?error=" + Uri.EscapeDataString("Single sign-on failed: " + ctx.Failure?.Message));
+            ctx.HandleResponse();
+            return Task.CompletedTask;
+        };
+    });
+}
+
 builder.Services.AddAuthorizationBuilder()
-    .SetFallbackPolicy(new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build())
-    .AddPolicy("Admin", p => p.RequireClaim(Claims.Admin, "true"));
+    .SetFallbackPolicy(new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(SmartScheme).RequireAuthenticatedUser().Build())
+    .AddPolicy("Admin", p => p.AddAuthenticationSchemes(SmartScheme).RequireClaim(Claims.Admin, "true"));
 builder.Services.AddCascadingAuthenticationState();
 
 if (hubOptions.TrustForwardedHeaders)
@@ -101,16 +175,30 @@ var library = app.Services.GetRequiredService<CourseLibrary>();
 await library.RescanAsync();
 library.StartWatching();
 
+var presence = app.Services.GetRequiredService<PresenceService>();
+app.Services.GetRequiredService<ProgressService>().Watched += (userId, course, lesson) => presence.Track(userId, course, lesson);
+app.Services.GetRequiredService<NotificationService>().Subscribe(
+    library, app.Services.GetRequiredService<ActivityService>(), app.Services.GetRequiredService<TranscriptService>());
+
 if (hubOptions.TrustForwardedHeaders) app.UseForwardedHeaders();
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/error", createScopeForErrors: true);
 }
 
+app.UseRequestLocalization(o =>
+{
+    var cultures = Localizer.Languages.Keys.Select(c => new CultureInfo(c)).ToList();
+    o.DefaultRequestCulture = new RequestCulture("en");
+    o.SupportedCultures = cultures;
+    o.SupportedUICultures = cultures;
+    o.RequestCultureProviders = [new CookieRequestCultureProvider(), new AcceptLanguageHeaderRequestCultureProvider()];
+});
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
 app.MapStaticAssets().AllowAnonymous();
+app.MapOpenApi().AllowAnonymous();
 
 app.MapGet("/health", (CourseLibrary lib) => Results.Ok(new { status = "ok", courses = lib.Courses.Count, lastScan = lib.LastScan }))
     .AllowAnonymous();
@@ -121,26 +209,94 @@ app.MapPost("/auth/logout", async (HttpContext ctx) =>
     return Results.Redirect("/login");
 }).AllowAnonymous().DisableAntiforgery();
 
-// ---------- media ----------
+// Language switcher: stores the choice in the standard ASP.NET Core culture cookie and reloads.
+app.MapGet("/culture", (string culture, string? redirect, HttpContext ctx) =>
+{
+    if (Localizer.Languages.ContainsKey(culture))
+        ctx.Response.Cookies.Append(CookieRequestCultureProvider.DefaultCookieName,
+            CookieRequestCultureProvider.MakeCookieValue(new RequestCulture(culture)),
+            new CookieOptions { Expires = DateTimeOffset.UtcNow.AddYears(1), IsEssential = true, SameSite = SameSiteMode.Lax });
+    return Results.LocalRedirect(redirect is { Length: > 0 } r && r.StartsWith('/') && !r.StartsWith("//") ? r : "/");
+}).AllowAnonymous();
+
+if (oidc.Enabled)
+{
+    app.MapGet("/auth/oidc/login", (string? returnUrl) =>
+        Results.Challenge(new AuthenticationProperties { RedirectUri = "/auth/oidc/complete?returnUrl=" + Uri.EscapeDataString(LocalUrl(returnUrl)) },
+            [OidcOptions.Scheme])).AllowAnonymous();
+
+    app.MapGet("/auth/oidc/complete", async (string? returnUrl, HttpContext ctx, UserService users) =>
+    {
+        var result = await ctx.AuthenticateAsync(ExternalScheme);
+        if (!result.Succeeded || result.Principal is null) return Results.Redirect("/login?error=" + Uri.EscapeDataString("Single sign-on didn't complete. Try again."));
+        var p = result.Principal;
+        var subject = p.FindFirstValue("sub") ?? p.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (subject is null) return Results.Redirect("/login?error=" + Uri.EscapeDataString("The identity provider didn't send a user id (sub)."));
+        var groups = p.FindAll(oidc.GroupsClaim).SelectMany(c => c.Value.Trim('[', ']').Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            .Select(g => g.Trim('"')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var isAdmin = !string.IsNullOrWhiteSpace(oidc.AdminGroup) && groups.Contains(oidc.AdminGroup);
+        var (user, error) = await users.ExternalSignInAsync(OidcOptions.Scheme, subject,
+            p.FindFirstValue(oidc.UsernameClaim) ?? p.FindFirstValue("email"), p.FindFirstValue("name"),
+            isAdmin, oidc.AutoCreateUsers, oidc.MatchExistingByUsername, syncAdmin: !string.IsNullOrWhiteSpace(oidc.AdminGroup));
+        await ctx.SignOutAsync(ExternalScheme);
+        if (user is null) return Results.Redirect("/login?error=" + Uri.EscapeDataString(error ?? "Sign-in failed."));
+        await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, UserService.Principal(user),
+            new AuthenticationProperties { IsPersistent = true });
+        return Results.LocalRedirect(LocalUrl(returnUrl));
+    }).AllowAnonymous();
+}
+
+// ---------- media (every file endpoint checks the user's library access) ----------
 
 var contentTypes = new FileExtensionContentTypeProvider();
 contentTypes.Mappings[".mkv"] = "video/x-matroska";
 contentTypes.Mappings[".m4v"] = "video/mp4";
 contentTypes.Mappings[".mov"] = "video/mp4"; // most .mov files are H.264 and play fine when labelled mp4
 
-// Streams lesson files with HTTP range support so videos can seek.
-app.MapGet("/media/{id}", (string id, CourseLibrary lib) =>
+async Task<Course?> AccessibleCourse(ClaimsPrincipal user, Course? course, UserService users) =>
+    course is not null && user.GetUserId() is { } id && CourseLibrary.CanAccess(course, await users.AllowedLibrariesAsync(id)) ? course : null;
+
+// Streams lesson files with HTTP range support so videos can seek. ?v=remux|h264 serves a converted copy.
+app.MapGet("/media/{id}", async (string id, string? v, ClaimsPrincipal user, CourseLibrary lib, UserService users, Transcoder transcoder) =>
 {
     var lesson = lib.GetLesson(id);
-    if (lesson is null || !File.Exists(lesson.FullPath)) return Results.NotFound();
+    if (lesson is null || await AccessibleCourse(user, lib.CourseOf(lesson), users) is null || !File.Exists(lesson.FullPath)) return Results.NotFound();
+    if (v is "remux" or "h264")
+    {
+        var variant = v == "remux" ? PlaybackVariant.Remux : PlaybackVariant.H264;
+        var prepared = transcoder.PreparedFile(lesson, variant);
+        if (prepared is null) return Results.NotFound(new { error = "Not prepared yet." });
+        transcoder.Touch(prepared);
+        return TypedResults.PhysicalFile(prepared, "video/mp4", enableRangeProcessing: true);
+    }
     if (!contentTypes.TryGetContentType(lesson.FullPath, out var type)) type = "application/octet-stream";
     return TypedResults.PhysicalFile(lesson.FullPath, type, enableRangeProcessing: true);
 });
 
-app.MapGet("/thumb/{id}", async (string id, CourseLibrary lib, MediaTools tools, HttpContext ctx) =>
+app.MapPost("/api/media/{id}/prepare", async (string id, string variant, ClaimsPrincipal user, CourseLibrary lib, UserService users, Transcoder transcoder) =>
 {
     var lesson = lib.GetLesson(id);
-    if (lesson is null) return Results.NotFound();
+    if (lesson is null || await AccessibleCourse(user, lib.CourseOf(lesson), users) is null) return Results.NotFound();
+    var v = variant == "remux" ? PlaybackVariant.Remux : PlaybackVariant.H264;
+    transcoder.Enqueue(lesson, v);
+    var job = transcoder.JobFor(lesson, v);
+    return Results.Ok(new { ready = transcoder.PreparedFile(lesson, v) is not null, state = job?.State.ToString(), percent = job?.Percent });
+}).DisableAntiforgery();
+
+app.MapGet("/attachment/{id}", async (string id, bool? download, ClaimsPrincipal user, CourseLibrary lib, UserService users) =>
+{
+    if (lib.GetAttachment(id) is not { } a || await AccessibleCourse(user, a.Course, users) is null || !File.Exists(a.File.FullPath)) return Results.NotFound();
+    if (!contentTypes.TryGetContentType(a.File.FullPath, out var type)) type = "application/octet-stream";
+    // PDFs/images open in the browser; everything else downloads.
+    return a.File.OpensInBrowser && download != true
+        ? TypedResults.PhysicalFile(a.File.FullPath, type, enableRangeProcessing: true)
+        : TypedResults.PhysicalFile(a.File.FullPath, type, a.File.Name, enableRangeProcessing: true);
+});
+
+app.MapGet("/thumb/{id}", async (string id, ClaimsPrincipal user, CourseLibrary lib, UserService users, MediaTools tools, HttpContext ctx) =>
+{
+    var lesson = lib.GetLesson(id);
+    if (lesson is null || await AccessibleCourse(user, lib.CourseOf(lesson), users) is null) return Results.NotFound();
     var file = await tools.ThumbnailAsync(lesson);
     if (file is null) return Results.NotFound();
     ctx.Response.Headers.CacheControl = "private, max-age=86400";
@@ -148,9 +304,9 @@ app.MapGet("/thumb/{id}", async (string id, CourseLibrary lib, MediaTools tools,
 });
 
 // Course cover: course.json "cover" / cover.jpg in the folder, else the first video's thumbnail.
-app.MapGet("/cover/{courseId}", async (string courseId, CourseLibrary lib, MediaTools tools, HttpContext ctx) =>
+app.MapGet("/cover/{courseId}", async (string courseId, ClaimsPrincipal user, CourseLibrary lib, UserService users, MediaTools tools, HttpContext ctx) =>
 {
-    var course = lib.GetCourse(courseId);
+    var course = await AccessibleCourse(user, lib.GetCourse(courseId), users);
     if (course is null) return Results.NotFound();
     if (course.CoverPath is not null)
     {
@@ -165,10 +321,11 @@ app.MapGet("/cover/{courseId}", async (string courseId, CourseLibrary lib, Media
     return TypedResults.PhysicalFile(file, "image/jpeg");
 });
 
-app.MapGet("/subs/{id}.vtt", (string id, CourseLibrary lib, TranscriptService transcripts) =>
+app.MapGet("/subs/{id}.vtt", async (string id, string? lang, ClaimsPrincipal user, CourseLibrary lib, UserService users, TranscriptService transcripts) =>
 {
     var lesson = lib.GetLesson(id);
-    var vtt = lesson is null ? null : transcripts.ToVtt(lesson);
+    if (lesson is null || await AccessibleCourse(user, lib.CourseOf(lesson), users) is null) return Results.NotFound();
+    var vtt = transcripts.ToVtt(lesson, lang);
     return vtt is null ? Results.NotFound() : Results.Text(vtt, "text/vtt", Encoding.UTF8);
 });
 
@@ -177,27 +334,35 @@ app.MapGet("/subs/{id}.vtt", (string id, CourseLibrary lib, TranscriptService tr
 app.MapGet("/api/export", async (ClaimsPrincipal user, UserDataService data) =>
     Results.File(await data.ExportAsync(user.GetUserId()!.Value), "application/json", $"coursehub-backup-{user.Identity?.Name}-{DateTime.Now:yyyy-MM-dd}.json"));
 
-app.MapGet("/api/notes.md", async (string? course, ClaimsPrincipal user, CourseLibrary lib, UserDataService data) =>
+app.MapGet("/api/notes.md", async (string? course, ClaimsPrincipal user, CourseLibrary lib, UserService users, UserDataService data) =>
 {
-    var c = course is null ? null : lib.GetCourse(course);
+    var c = course is null ? null : await AccessibleCourse(user, lib.GetCourse(course), users);
     var md = await data.NotesMarkdownAsync(user.GetUserId()!.Value, c);
     var name = c is null ? "coursehub-notes" : $"{c.Title} notes";
     return Results.File(Encoding.UTF8.GetBytes(md), "text/markdown", $"{name}.md");
 });
 
+app.MapGet("/api/flashcards/{lessonId}.txt", async (string lessonId, ClaimsPrincipal user, CourseLibrary lib, UserService users, AiService ai) =>
+{
+    var lesson = lib.GetLesson(lessonId);
+    if (lesson is null || await AccessibleCourse(user, lib.CourseOf(lesson), users) is null) return Results.NotFound();
+    var cards = await ai.CachedFlashcardsAsync(lesson);
+    return cards is null ? Results.NotFound() : Results.File(Encoding.UTF8.GetBytes(AiService.ToAnki(cards)), "text/plain", $"{lesson.Title} flashcards.txt");
+});
+
 // ---------- code resources ----------
 
-app.MapGet("/code/{resourceId}/raw", (string resourceId, string path, CourseLibrary lib) =>
+app.MapGet("/code/{resourceId}/raw", async (string resourceId, string path, ClaimsPrincipal user, CourseLibrary lib, UserService users) =>
 {
-    if (lib.GetResource(resourceId) is not { } r) return Results.NotFound();
+    if (lib.GetResource(resourceId) is not { } r || await AccessibleCourse(user, r.Course, users) is null) return Results.NotFound();
     var full = CodeBrowser.Resolve(r.Folder, path);
     return full is null ? Results.NotFound() : TypedResults.PhysicalFile(full, "application/octet-stream", Path.GetFileName(full));
 });
 
 // Whole resource folder as a zip (skips bin/obj/.git and friends), streamed without a temp file.
-app.MapGet("/code/{resourceId}/zip", async (string resourceId, CourseLibrary lib, CodeBrowser code, HttpContext ctx) =>
+app.MapGet("/code/{resourceId}/zip", async (string resourceId, ClaimsPrincipal user, CourseLibrary lib, UserService users, CodeBrowser code, HttpContext ctx) =>
 {
-    if (lib.GetResource(resourceId) is not { } r) { ctx.Response.StatusCode = 404; return; }
+    if (lib.GetResource(resourceId) is not { } r || await AccessibleCourse(user, r.Course, users) is null) { ctx.Response.StatusCode = 404; return; }
     var name = string.Concat(r.Folder.Name.Split(Path.GetInvalidFileNameChars())).Replace(" / ", "-");
     ctx.Response.ContentType = "application/zip";
     ctx.Response.Headers.ContentDisposition = $"attachment; filename=\"{name}.zip\"";
@@ -229,11 +394,37 @@ app.MapPost("/api/open/{with}/{resourceId}", async (string with, string resource
     return error is null ? Results.Ok() : Results.Problem(error, statusCode: 500);
 }).RequireAuthorization("Admin").DisableAntiforgery();
 
+app.MapCourseHubApi();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 app.Run();
 
+static string LocalUrl(string? url) => url is { Length: > 0 } u && u.StartsWith('/') && !u.StartsWith("//") && !u.StartsWith("/\\") ? u : "/";
+
 static bool IsApiRequest(HttpRequest r) =>
     r.Path.StartsWithSegments("/api") || r.Path.StartsWithSegments("/media") || r.Path.StartsWithSegments("/thumb")
-    || r.Path.StartsWithSegments("/cover") || r.Path.StartsWithSegments("/subs") || r.Path.StartsWithSegments("/code")
-       && (r.Path.Value?.EndsWith("/raw") == true || r.Path.Value?.EndsWith("/zip") == true);
+    || r.Path.StartsWithSegments("/cover") || r.Path.StartsWithSegments("/subs") || r.Path.StartsWithSegments("/attachment")
+    || r.Path.StartsWithSegments("/code") && (r.Path.Value?.EndsWith("/raw") == true || r.Path.Value?.EndsWith("/zip") == true);
+
+/// <summary>OpenID Connect single sign-on (Authentik, Authelia, Keycloak, Zitadel, Pocket ID…). Configure with Oidc__* env vars.</summary>
+public sealed class OidcOptions
+{
+    public const string Scheme = "oidc";
+    public string? Authority { get; set; }
+    public string? ClientId { get; set; }
+    public string? ClientSecret { get; set; }
+    public string DisplayName { get; set; } = "Single sign-on";
+    public string Scopes { get; set; } = "openid profile email groups";
+    public string UsernameClaim { get; set; } = "preferred_username";
+    public string GroupsClaim { get; set; } = "groups";
+    /// <summary>Members of this group become admins (and stop being admins when removed from it).</summary>
+    public string? AdminGroup { get; set; }
+    /// <summary>Create a CourseHub account the first time someone signs in.</summary>
+    public bool AutoCreateUsers { get; set; } = true;
+    /// <summary>Link to an existing local account with the same username (only enable if your IdP usernames are trusted).</summary>
+    public bool MatchExistingByUsername { get; set; }
+    /// <summary>Hide the username/password form.</summary>
+    public bool DisablePasswordLogin { get; set; }
+    public bool RequireHttpsMetadata { get; set; } = true;
+    public bool Enabled => !string.IsNullOrWhiteSpace(Authority) && !string.IsNullOrWhiteSpace(ClientId);
+}

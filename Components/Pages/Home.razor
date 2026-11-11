@@ -6,11 +6,12 @@
 @inject UserDataService UserData
 @inject TranscriptService Transcripts
 @inject MediaTools Tools
+@inject ActivityService Activity
 
 <PageTitle>My Learning · CourseHub</PageTitle>
 
 <TopNav>
-    <input class="search" type="search" placeholder="Search courses, lessons and transcripts…" @bind="query" @bind:event="oninput" @bind:after="SearchTranscripts" />
+    <input class="search" type="search" placeholder="@L["Search courses, lessons and transcripts…"]" @bind="query" @bind:event="oninput" @bind:after="SearchTranscripts" />
     @if (IsAdmin)
     {
         <button class="btn ghost hide-mobile" @onclick="Rescan" disabled="@scanning" title="Pick up new or changed course folders">
@@ -20,7 +21,7 @@
 </TopNav>
 
 <main class="home">
-    @if (Library.Courses.Count == 0)
+    @if (VisibleCourses.Count == 0)
     {
         <div class="empty">
             <h1>No courses found</h1>
@@ -78,17 +79,17 @@
     }
     else
     {
-        <h1 class="page-title">My learning</h1>
+        <h1 class="page-title">@L["My learning"]</h1>
         <div class="summary">
-            <div><strong>@Library.Courses.Count</strong><span>courses</span></div>
-            <div><strong>@Library.Courses.Sum(c => c.LessonCount)</strong><span>lessons</span></div>
-            <div><strong>@Format.Long(Library.Courses.Sum(c => c.TotalSeconds))</strong><span>of video</span></div>
-            <div><strong>@stats.Values.Sum(s => s.Completed)</strong><span>lessons completed</span></div>
+            <div><strong>@VisibleCourses.Count</strong><span>@L["courses"]</span></div>
+            <div><strong>@VisibleCourses.Sum(c => c.LessonCount)</strong><span>@L["lessons"]</span></div>
+            <div><strong>@Format.Long(VisibleCourses.Sum(c => c.TotalSeconds))</strong><span>@L["of video"]</span></div>
+            <div><strong>@stats.Values.Sum(s => s.Completed)</strong><span>@L["lessons completed"]</span></div>
         </div>
 
         @if (inProgress.Count > 0)
         {
-            <h2 class="row-title">Continue learning</h2>
+            <h2 class="row-title">@L["Continue learning"]</h2>
             <div class="continue">
                 @foreach (var c in inProgress)
                 {
@@ -110,11 +111,11 @@
 
         @if (paths.Count > 0)
         {
-            <h2 class="row-title">Learning paths <a class="tiny accent" href="/paths">Manage →</a></h2>
+            <h2 class="row-title">@L["Learning paths"] <a class="tiny accent" href="/paths">@L["Manage"] →</a></h2>
             <div class="continue">
                 @foreach (var p in paths)
                 {
-                    var courses = p.Items.Select(i => Library.GetCourseByFolder(i.CoursePath)).OfType<Course>().ToList();
+                    var courses = p.Items.Select(i => Library.GetCourseByFolder(i.CoursePath)).OfType<Course>().Where(c => stats.ContainsKey(c.Id)).ToList();
                     var done = courses.Sum(c => stats[c.Id].Completed);
                     var total = courses.Sum(c => stats[c.Id].Total);
                     var next = courses.FirstOrDefault(c => stats[c.Id].Completed < stats[c.Id].Total);
@@ -130,13 +131,43 @@
             </div>
         }
 
+        @if (feed.Any(f => f.UserId != UserId))
+        {
+            <h2 class="row-title">@L["Household activity"]</h2>
+            <ul class="feed panel">
+                @foreach (var f in feed.Take(8))
+                {
+                    <li>
+                        <span class="who">@(f.UserId == UserId ? L["You"] : f.UserName)</span>
+                        <span>
+                            @switch (f.Type)
+                            {
+                                case ActivityType.CourseStarted: @L["started"] break;
+                                case ActivityType.CourseCompleted: @("🎓 " + L["finished"]) break;
+                                default: @(f.Count == 1 ? L["completed a lesson in"] : L["completed {0} lessons in", f.Count]) break;
+                            }
+                        </span>
+                        <a href="@($"course/{f.Course.Id}")">@f.Course.Title</a>
+                        <span class="muted tiny push">@Format.Ago(f.At)</span>
+                    </li>
+                }
+            </ul>
+        }
+
         <div class="row-title with-filters">
-            <h2>Courses</h2>
+            <h2>@L["Courses"]</h2>
+            @if (VisibleLibraries.Count > 1)
+            {
+                <select class="library-select" @bind="libraryFilter">
+                    <option value="0">All libraries</option>
+                    @foreach (var l in VisibleLibraries) { <option value="@l.Id">@l.Name</option> }
+                </select>
+            }
             <div class="chips">
                 @foreach (var f in Filters)
                 {
                     var n = Filtered(f).Count();
-                    <button class="chip @(filter == f ? "active" : "")" @onclick="() => filter = f">@f <span class="muted">@n</span></button>
+                    <button class="chip @(filter == f ? "active" : "")" @onclick="() => filter = f">@L[f] <span class="muted">@n</span></button>
                 }
             </div>
         </div>
@@ -158,22 +189,28 @@
     private List<Course> inProgress = [];
     private List<LearningPath> paths = [];
     private List<TranscriptHit> transcriptHits = [];
+    private List<FeedItem> feed = [];
     private string query = "";
     private string filter = "All";
     private bool scanning;
 
     private string Q => query.Trim();
+    private int libraryFilter;
 
-    private List<Course> matchingCourses => Library.Courses
+    /// <summary>Courses in libraries this user can see, narrowed to the chosen library.</summary>
+    private List<Course> VisibleCourses => Library.CoursesFor(Access).Where(c => libraryFilter == 0 || c.LibraryId == libraryFilter).ToList();
+    private List<LibraryInfo> VisibleLibraries => Library.Libraries.Where(l => Access is null || Access.Contains(l.Id)).Where(l => Library.Courses.Any(c => c.LibraryId == l.Id)).ToList();
+
+    private List<Course> matchingCourses => VisibleCourses
         .Where(c => c.Title.Contains(Q, StringComparison.OrdinalIgnoreCase) || (c.Author?.Contains(Q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
 
-    private List<(Course, Lesson)> matchingLessons => Library.Courses
+    private List<(Course, Lesson)> matchingLessons => VisibleCourses
         .SelectMany(c => c.AllLessons.Select(l => (c, l)))
         .Where(x => x.l.Title.Contains(Q, StringComparison.OrdinalIgnoreCase)).ToList();
 
     private CourseMeta MetaOf(Course c) => meta.GetValueOrDefault(c.FolderName) ?? new CourseMeta();
 
-    private IEnumerable<Course> Filtered(string f) => Library.Courses.Where(c =>
+    private IEnumerable<Course> Filtered(string f) => VisibleCourses.Where(c =>
     {
         var s = stats.GetValueOrDefault(c.Id);
         var m = MetaOf(c);
@@ -202,10 +239,11 @@
 
     private async Task LoadStats()
     {
-        stats = await ProgressService.StatsAsync(UserId, Library.Courses);
+        stats = await ProgressService.StatsAsync(UserId, Library.CoursesFor(Access).ToList());
         meta = await UserData.AllMetaAsync(UserId);
         paths = (await UserData.PathsAsync(UserId)).Where(p => p.Items.Count > 0).ToList();
-        inProgress = Library.Courses
+        feed = await Activity.FeedAsync(UserId, Access);
+        inProgress = Library.CoursesFor(Access)
             .Where(c => stats[c.Id].Started && stats[c.Id].Completed < stats[c.Id].Total && !MetaOf(c).Archived)
             .OrderByDescending(c => stats[c.Id].LastWatched)
             .Take(6)
@@ -218,7 +256,7 @@
         if (q.Length < 3) { transcriptHits = []; return; }
         await Task.Delay(250); // debounce typing
         if (q != Q) return;
-        transcriptHits = await Transcripts.SearchAsync(q);
+        transcriptHits = await Transcripts.SearchAsync(q, Access);
     }
 
     private async Task Rescan()

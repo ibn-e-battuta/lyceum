@@ -10,8 +10,14 @@ public sealed record CourseStats(int Completed, int Total, Lesson? ResumeLesson,
 }
 
 /// <summary>Per-user watch progress.</summary>
-public sealed class ProgressService(IDbContextFactory<ProgressDb> dbFactory)
+public sealed class ProgressService(IDbContextFactory<ProgressDb> dbFactory, IServiceProvider services)
 {
+    // Resolved lazily: ActivityService depends on the library, which is fine, but keeps construction order simple.
+    private ActivityService Activity => services.GetRequiredService<ActivityService>();
+
+    /// <summary>Raised whenever someone's progress changes (used by the admin dashboard's "watching now").</summary>
+    public event Action<int, Course, Lesson>? Watched;
+
     /// <summary>A lesson counts as complete once 92% has been watched (skips end credits/outros).</summary>
     private const double CompleteThreshold = 0.92;
 
@@ -63,7 +69,9 @@ public sealed class ProgressService(IDbContextFactory<ProgressDb> dbFactory)
     public async Task<LessonProgress> SavePositionAsync(int userId, Course course, Lesson lesson, double position, double duration, double watchedSeconds = 0)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
+        var isNewCourse = !await db.Progress.AnyAsync(p => p.UserId == userId && p.CoursePath == course.FolderName);
         var row = await GetOrCreate(db, userId, course, lesson);
+        var wasComplete = row.Completed;
         if (watchedSeconds > 0)
         {
             // Wall-clock time spent watching, for the stats page. Capped so one bad report can't skew it.
@@ -77,17 +85,31 @@ public sealed class ProgressService(IDbContextFactory<ProgressDb> dbFactory)
         if (duration > 0 && position / duration >= CompleteThreshold) row.Completed = true;
         row.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
+        await AfterChangeAsync(db, userId, course, lesson, isNewCourse, !wasComplete && row.Completed);
+        if (watchedSeconds > 0) Watched?.Invoke(userId, course, lesson);
         return row;
+    }
+
+    private async Task AfterChangeAsync(ProgressDb db, int userId, Course course, Lesson lesson, bool started, bool lessonCompleted)
+    {
+        if (started) await Activity.RecordAsync(userId, ActivityType.CourseStarted, course);
+        if (!lessonCompleted) return;
+        await Activity.RecordAsync(userId, ActivityType.LessonCompleted, course, lesson);
+        var done = await db.Progress.CountAsync(p => p.UserId == userId && p.CoursePath == course.FolderName && p.Completed);
+        if (done >= course.LessonCount) await Activity.RecordAsync(userId, ActivityType.CourseCompleted, course);
     }
 
     public async Task<LessonProgress> SetCompletedAsync(int userId, Course course, Lesson lesson, bool completed)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
+        var isNewCourse = !await db.Progress.AnyAsync(p => p.UserId == userId && p.CoursePath == course.FolderName);
         var row = await GetOrCreate(db, userId, course, lesson);
+        var wasComplete = row.Completed;
         row.Completed = completed;
         if (!completed) row.PositionSeconds = 0;
         row.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
+        await AfterChangeAsync(db, userId, course, lesson, isNewCourse, !wasComplete && completed);
         return row;
     }
 

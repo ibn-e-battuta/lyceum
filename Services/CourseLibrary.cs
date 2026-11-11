@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using CourseHub.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace CourseHub.Services;
 
@@ -18,14 +20,31 @@ public sealed class CourseHubOptions
     public bool TrustForwardedHeaders { get; set; }
 }
 
-/// <summary>
-/// Scans the courses folder. Every top-level folder is a course; sub-folders that contain
-/// lessons become sections. Flat courses are split into sections at "Introduction"/"Overview" lessons.
-/// </summary>
-public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvironment env, ILogger<CourseLibrary> logger) : IDisposable
+/// <summary>What changed between two scans.</summary>
+public sealed record LibraryDiff(IReadOnlyList<Course> AddedCourses, IReadOnlyList<Course> RemovedCourses, IReadOnlyList<(Course Course, Lesson Lesson)> AddedLessons)
 {
-    private static readonly HashSet<string> SubtitleExt = new(StringComparer.OrdinalIgnoreCase) { ".vtt", ".srt" };
+    public bool IsEmpty => AddedCourses.Count == 0 && RemovedCourses.Count == 0 && AddedLessons.Count == 0;
+}
+
+/// <summary>
+/// Scans the library folders. Every top-level folder is a course; sub-folders that contain
+/// lessons become sections. Flat courses are split into sections at "Introduction"/"Overview" lessons.
+/// Files named after a lesson (slides, PDFs, zips) become that lesson's attachments.
+/// </summary>
+public sealed partial class CourseLibrary(
+    CourseHubOptions options,
+    IWebHostEnvironment env,
+    IDbContextFactory<ProgressDb> dbFactory,
+    MediaProbe probe,
+    ILogger<CourseLibrary> logger) : IDisposable
+{
     public const string ManifestFile = "course.json";
+    private static readonly HashSet<string> VideoExt = new(StringComparer.OrdinalIgnoreCase) { ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".wmv", ".flv", ".ts", ".mpg", ".mpeg" };
+    private static readonly HashSet<string> ArticleExt = new(StringComparer.OrdinalIgnoreCase) { ".html", ".htm", ".pdf" };
+    private static readonly HashSet<string> SubtitleExt = new(StringComparer.OrdinalIgnoreCase) { ".vtt", ".srt" };
+    private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules", "wwwroot", "Properties", "target" };
+    private static readonly HashSet<string> SkipFiles = new(StringComparer.OrdinalIgnoreCase) { ManifestFile, "cover.jpg", "cover.jpeg", "cover.png", "cover.webp", "Thumbs.db", "desktop.ini" };
+    private static readonly string[] ProjectMarkers = ["*.csproj", "*.sln", "*.slnx", "package.json", "Cargo.toml", "*.fsproj"];
     private static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -36,33 +55,37 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
         AllowTrailingCommas = true,
     };
 
-    private FileSystemWatcher? _watcher;
+    private readonly ConcurrentDictionary<string, double?> _durationCache = new();
+    private readonly SemaphoreSlim _scanLock = new(1, 1);
+    private readonly List<FileSystemWatcher> _watchers = [];
     private CancellationTokenSource? _debounce;
+    private Timer? _timer;
+    private volatile Snapshot _snapshot = Snapshot.Empty;
+    private bool _scannedOnce;
 
     /// <summary>Raised after every rescan.</summary>
     public event Action? Changed;
-    private static readonly HashSet<string> VideoExt = new(StringComparer.OrdinalIgnoreCase) { ".mp4", ".m4v", ".mov", ".webm", ".mkv" };
-    private static readonly HashSet<string> ArticleExt = new(StringComparer.OrdinalIgnoreCase) { ".html", ".htm", ".pdf" };
-    private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules", "wwwroot", "Properties", "target" };
-    private static readonly string[] ProjectMarkers = ["*.csproj", "*.sln", "*.slnx", "package.json", "Cargo.toml", "*.fsproj"];
-
-    private readonly ConcurrentDictionary<string, double?> _durationCache = new();
-    private readonly SemaphoreSlim _scanLock = new(1, 1);
-    private volatile Snapshot _snapshot = Snapshot.Empty;
+    /// <summary>Raised when courses or lessons appeared/disappeared (not on the first scan after startup).</summary>
+    public event Action<LibraryDiff>? Diff;
 
     private sealed record Snapshot(
+        IReadOnlyList<LibraryInfo> Libraries,
         IReadOnlyList<Course> Courses,
         IReadOnlyDictionary<string, Lesson> Lessons,
         IReadOnlyDictionary<string, (Course Course, Lesson Lesson)> ByPath,
         IReadOnlyDictionary<string, (Course Course, ResourceFolder Folder)> Resources,
+        IReadOnlyDictionary<string, (Course Course, Attachment File)> Attachments,
         DateTime ScannedAt)
     {
-        public static readonly Snapshot Empty = new([], new Dictionary<string, Lesson>(),
-            new Dictionary<string, (Course, Lesson)>(), new Dictionary<string, (Course, ResourceFolder)>(), DateTime.MinValue);
+        public static readonly Snapshot Empty = new([], [], new Dictionary<string, Lesson>(),
+            new Dictionary<string, (Course, Lesson)>(), new Dictionary<string, (Course, ResourceFolder)>(),
+            new Dictionary<string, (Course, Attachment)>(), DateTime.MinValue);
     }
 
+    /// <summary>The folder of library #1 (from configuration).</summary>
     public string RootPath => Path.GetFullPath(Path.Combine(env.ContentRootPath, options.CoursesRoot));
 
+    public IReadOnlyList<LibraryInfo> Libraries => _snapshot.Libraries;
     public IReadOnlyList<Course> Courses => _snapshot.Courses;
     public DateTime LastScan => _snapshot.ScannedAt;
 
@@ -77,7 +100,84 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
     public (Course Course, ResourceFolder Folder)? GetResource(string id) =>
         _snapshot.Resources.TryGetValue(id, out var x) ? x : null;
 
-    private Timer? _timer;
+    public (Course Course, Attachment File)? GetAttachment(string id) =>
+        _snapshot.Attachments.TryGetValue(id, out var x) ? x : null;
+
+    // ---------- access control ----------
+
+    /// <summary>Courses a user may see. <paramref name="allowed"/> null means every library.</summary>
+    public IEnumerable<Course> CoursesFor(IReadOnlySet<int>? allowed) =>
+        allowed is null ? Courses : Courses.Where(c => allowed.Contains(c.LibraryId));
+
+    public static bool CanAccess(Course course, IReadOnlySet<int>? allowed) => allowed is null || allowed.Contains(course.LibraryId);
+
+    // ---------- libraries ----------
+
+    public async Task<string?> AddLibraryAsync(string name, string path)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "Give the library a name.";
+        var full = Path.GetFullPath(path.Trim());
+        if (!Directory.Exists(full)) return $"Folder {full} doesn't exist (inside Docker, mount it into the container first).";
+        if (_snapshot.Libraries.Any(l => Overlaps(l.Root, full))) return "That folder is inside (or contains) another library.";
+        await using var db = await dbFactory.CreateDbContextAsync();
+        db.Libraries.Add(new LibraryEntity { Name = name.Trim(), Path = full, CreatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        await RescanAsync();
+        return null;
+    }
+
+    public async Task<string?> UpdateLibraryAsync(int id, string name, string? path)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var lib = await db.Libraries.FindAsync(id);
+        if (lib is null) return "Library not found.";
+        if (string.IsNullOrWhiteSpace(name)) return "Give the library a name.";
+        lib.Name = name.Trim();
+        if (id != 1 && path is not null)
+        {
+            var full = Path.GetFullPath(path.Trim());
+            if (!Directory.Exists(full)) return $"Folder {full} doesn't exist.";
+            if (_snapshot.Libraries.Any(l => l.Id != id && Overlaps(l.Root, full))) return "That folder is inside (or contains) another library.";
+            lib.Path = full;
+        }
+        await db.SaveChangesAsync();
+        await RescanAsync();
+        return null;
+    }
+
+    /// <summary>Removes a library from CourseHub. Files on disk and users' progress are kept.</summary>
+    public async Task<string?> RemoveLibraryAsync(int id)
+    {
+        if (id == 1) return "The main library comes from the server configuration and can't be removed.";
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await db.Libraries.Where(l => l.Id == id).ExecuteDeleteAsync();
+        await RescanAsync();
+        return null;
+    }
+
+    private static bool Overlaps(string a, string b)
+    {
+        a = a.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        b = b.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return a.StartsWith(b, StringComparison.Ordinal) || b.StartsWith(a, StringComparison.Ordinal);
+    }
+
+    private async Task<List<LibraryInfo>> LoadLibrariesAsync()
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var rows = await db.Libraries.AsNoTracking().OrderBy(l => l.Id).ToListAsync();
+        if (rows.All(r => r.Id != 1))
+        {
+            var main = new LibraryEntity { Id = 1, Name = "Courses", Path = "(configuration)", CreatedAt = DateTime.UtcNow };
+            db.Libraries.Add(main);
+            await db.SaveChangesAsync();
+            rows.Insert(0, main);
+        }
+        // Library #1 always follows the configured folder, so changing CourseHub__CoursesRoot just works.
+        return rows.Select(r => new LibraryInfo(r.Id, r.Name, r.Id == 1 ? RootPath : r.Path)).ToList();
+    }
+
+    // ---------- watching ----------
 
     public void StartWatching()
     {
@@ -86,42 +186,53 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
             var every = TimeSpan.FromMinutes(options.RescanIntervalMinutes);
             _timer = new Timer(_ => _ = RescanAsync(), null, every, every);
         }
-        if (!options.WatchForChanges || !Directory.Exists(RootPath)) return;
-        try
+        RestartWatchers();
+    }
+
+    private void RestartWatchers()
+    {
+        lock (_watchers)
         {
-            StartFileWatcher();
-        }
-        catch (Exception ex)
-        {
-            // e.g. inotify limits on Linux with very large libraries; the timer (if set) still works.
-            logger.LogWarning(ex, "Could not watch {Root} for changes; use Rescan or RescanIntervalMinutes instead", RootPath);
+            foreach (var w in _watchers) w.Dispose();
+            _watchers.Clear();
+            if (!options.WatchForChanges) return;
+            foreach (var lib in _snapshot.Libraries.Where(l => Directory.Exists(l.Root)))
+            {
+                try
+                {
+                    _watchers.Add(CreateWatcher(lib.Root));
+                }
+                catch (Exception ex)
+                {
+                    // e.g. inotify limits on Linux with very large libraries; the timer (if set) still works.
+                    logger.LogWarning(ex, "Could not watch {Root} for changes; use Rescan or RescanIntervalMinutes instead", lib.Root);
+                }
+            }
         }
     }
 
-    private void StartFileWatcher()
+    private FileSystemWatcher CreateWatcher(string root)
     {
         var ignore = new HashSet<string>(options.IgnoreFolders, StringComparer.OrdinalIgnoreCase);
-        _watcher = new FileSystemWatcher(RootPath)
+        var watcher = new FileSystemWatcher(root)
         {
             IncludeSubdirectories = true,
             NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size,
         };
         void OnChange(object? _, FileSystemEventArgs e)
         {
-            var rel = Path.GetRelativePath(RootPath, e.FullPath);
+            var rel = Path.GetRelativePath(root, e.FullPath);
             var first = rel.Split(Path.DirectorySeparatorChar)[0];
             if (first.StartsWith('.') || ignore.Contains(first) || Path.GetFileName(e.FullPath).StartsWith('.')) return;
-            var ext = Path.GetExtension(e.FullPath);
-            var relevant = ext.Length == 0 || VideoExt.Contains(ext) || ArticleExt.Contains(ext) || SubtitleExt.Contains(ext)
-                           || Path.GetFileName(e.FullPath).Equals(ManifestFile, StringComparison.OrdinalIgnoreCase);
-            if (relevant) ScheduleRescan();
+            ScheduleRescan();
         }
-        _watcher.Created += OnChange;
-        _watcher.Deleted += OnChange;
-        _watcher.Changed += OnChange;
-        _watcher.Renamed += (s, e) => OnChange(s, e);
-        _watcher.EnableRaisingEvents = true;
-        logger.LogInformation("Watching {Root} for course changes", RootPath);
+        watcher.Created += OnChange;
+        watcher.Deleted += OnChange;
+        watcher.Changed += OnChange;
+        watcher.Renamed += (s, e) => OnChange(s, e);
+        watcher.EnableRaisingEvents = true;
+        logger.LogInformation("Watching {Root} for course changes", root);
+        return watcher;
     }
 
     private void ScheduleRescan()
@@ -136,9 +247,11 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
 
     public void Dispose()
     {
-        _watcher?.Dispose();
+        lock (_watchers) foreach (var w in _watchers) w.Dispose();
         _timer?.Dispose();
     }
+
+    // ---------- course.json ----------
 
     public static CourseManifest? ReadManifest(string courseDir)
     {
@@ -161,17 +274,33 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
         await RescanAsync();
     }
 
+    // ---------- scanning ----------
+
     public async Task RescanAsync()
     {
         await _scanLock.WaitAsync();
         try
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var snapshot = await Task.Run(Scan);
+            var libraries = await LoadLibrariesAsync();
+            var librariesChanged = !libraries.SequenceEqual(_snapshot.Libraries);
+            var previous = _snapshot;
+            var snapshot = await Task.Run(() => Scan(libraries));
             _snapshot = snapshot;
+            if (librariesChanged && (_watchers.Count > 0 || _timer is not null)) RestartWatchers();
+
             try { Changed?.Invoke(); } catch (Exception ex) { logger.LogWarning(ex, "Change handler failed"); }
-            logger.LogInformation("Scanned {Courses} courses / {Lessons} lessons from {Root} in {Ms} ms",
-                snapshot.Courses.Count, snapshot.Lessons.Count, RootPath, sw.ElapsedMilliseconds);
+            if (_scannedOnce)
+            {
+                var diff = Compare(previous, snapshot);
+                if (!diff.IsEmpty)
+                {
+                    try { Diff?.Invoke(diff); } catch (Exception ex) { logger.LogWarning(ex, "Diff handler failed"); }
+                }
+            }
+            _scannedOnce = true;
+            logger.LogInformation("Scanned {Courses} courses / {Lessons} lessons in {Libraries} libraries in {Ms} ms",
+                snapshot.Courses.Count, snapshot.Lessons.Count, libraries.Count, sw.ElapsedMilliseconds);
         }
         finally
         {
@@ -179,43 +308,67 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
         }
     }
 
-    private Snapshot Scan()
+    private static LibraryDiff Compare(Snapshot before, Snapshot after)
     {
-        var root = RootPath;
-        if (!Directory.Exists(root))
-        {
-            logger.LogWarning("Courses root {Root} does not exist", root);
-            return Snapshot.Empty with { ScannedAt = DateTime.UtcNow };
-        }
+        var oldCourses = before.Courses.Select(c => c.Id).ToHashSet();
+        var newCourses = after.Courses.Select(c => c.Id).ToHashSet();
+        var added = after.Courses.Where(c => !oldCourses.Contains(c.Id)).ToList();
+        var removed = before.Courses.Where(c => !newCourses.Contains(c.Id)).ToList();
+        var addedLessons = after.ByPath.Where(kv => !before.ByPath.ContainsKey(kv.Key)).Select(kv => kv.Value).ToList();
+        return new LibraryDiff(added, removed, addedLessons);
+    }
 
+    private Snapshot Scan(IReadOnlyList<LibraryInfo> libraries)
+    {
         var ignore = new HashSet<string>(options.IgnoreFolders, StringComparer.OrdinalIgnoreCase);
         var courses = new List<Course>();
-        foreach (var dir in Directory.EnumerateDirectories(root))
+        foreach (var lib in libraries)
         {
-            var name = Path.GetFileName(dir);
-            if (name.StartsWith('.') || ignore.Contains(name)) continue;
-            var course = BuildCourse(root, dir);
-            if (course.LessonCount > 0) courses.Add(course);
+            if (!Directory.Exists(lib.Root))
+            {
+                logger.LogWarning("Library {Name} folder {Root} does not exist", lib.Name, lib.Root);
+                continue;
+            }
+            foreach (var dir in Directory.EnumerateDirectories(lib.Root))
+            {
+                var name = Path.GetFileName(dir);
+                if (name.StartsWith('.') || ignore.Contains(name)) continue;
+                try
+                {
+                    var course = BuildCourse(lib, dir);
+                    if (course.LessonCount > 0) courses.Add(course);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    logger.LogWarning(ex, "Skipping {Folder}", dir);
+                }
+            }
         }
 
         courses.Sort((a, b) => NaturalComparer.Instance.Compare(a.Title, b.Title));
         var lessons = courses.SelectMany(c => c.AllLessons).ToDictionary(l => l.Id);
         var byPath = courses.SelectMany(c => c.AllLessons.Select(l => (c, l))).ToDictionary(x => x.l.RelativePath, x => (x.c, x.l));
         var resources = courses.SelectMany(c => c.Resources.Select(r => (c, r))).ToDictionary(x => x.r.Id, x => (x.c, x.r));
-        return new Snapshot(courses, lessons, byPath, resources, DateTime.UtcNow);
+        var attachments = new Dictionary<string, (Course, Attachment)>();
+        foreach (var c in courses)
+        {
+            foreach (var a in c.AllLessons.SelectMany(l => l.Attachments).Concat(c.Sections.SelectMany(s => s.Files)))
+                attachments.TryAdd(a.Id, (c, a));
+        }
+        return new Snapshot(libraries, courses, lessons, byPath, resources, attachments, DateTime.UtcNow);
     }
 
-    private Course BuildCourse(string root, string courseDir)
+    private Course BuildCourse(LibraryInfo lib, string courseDir)
     {
         var manifest = ReadManifest(courseDir);
         var sections = new List<Section>();
         var resources = new List<ResourceFolder>();
 
         // Lessons directly in the course folder.
-        var rootLessons = LessonsIn(root, courseDir);
+        var (rootLessons, rootFiles) = LessonsIn(lib, courseDir);
         var subSections = new List<Section>();
         foreach (var sub in SubDirs(courseDir))
-            CollectSections(root, sub, Path.GetFileName(sub), subSections, resources);
+            CollectSections(lib, sub, Path.GetFileName(sub), subSections, resources);
 
         if (rootLessons.Count > 0)
         {
@@ -226,6 +379,8 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
             else
                 sections.Add(new Section(subSections.Count == 0 ? "Course Content" : "Main Lessons", rootLessons));
         }
+        // Loose files in the course folder go with the first section.
+        if (rootFiles.Count > 0 && sections.Count > 0) sections[0] = sections[0] with { Files = rootFiles };
         sections.AddRange(subSections);
 
         string? cover = null;
@@ -238,11 +393,16 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
             .Select(n => Path.Combine(courseDir, n)).FirstOrDefault(File.Exists);
 
         var folder = Path.GetFileName(courseDir);
+        var bytes = sections.Sum(s => s.Lessons.Sum(l => l.SizeBytes + l.Attachments.Sum(a => a.SizeBytes)) + s.Files.Sum(f => f.SizeBytes));
         return new Course(
-            StableId(Path.GetRelativePath(root, courseDir)),
+            StableId(lib.KeyPrefix + Path.GetRelativePath(lib.Root, courseDir)),
             string.IsNullOrWhiteSpace(manifest?.Title) ? folder : manifest.Title.Trim(),
-            folder, courseDir, sections, resources,
-            manifest?.Author, manifest?.Description, cover);
+            lib.KeyPrefix + folder, courseDir, sections, resources,
+            manifest?.Author, manifest?.Description, cover)
+        {
+            LibraryId = lib.Id,
+            TotalBytes = bytes,
+        };
     }
 
     private static IEnumerable<Section> ManifestSections(List<Lesson> lessons, List<ManifestSection> custom)
@@ -259,31 +419,31 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
     }
 
     /// <returns>true when the folder (or a child) contains lessons.</returns>
-    private bool CollectSections(string root, string dir, string title, List<Section> into, List<ResourceFolder> resources)
+    private bool CollectSections(LibraryInfo lib, string dir, string title, List<Section> into, List<ResourceFolder> resources)
     {
         if (IsCodeProject(dir))
         {
-            AddResource(root, dir, title, resources);
+            AddResource(lib, dir, title, resources);
             return false;
         }
-        var lessons = LessonsIn(root, dir);
+        var (lessons, files) = LessonsIn(lib, dir);
         var any = lessons.Count > 0;
-        if (any) into.Add(new Section(CleanTitle(title, isFile: false), lessons));
+        if (any) into.Add(new Section(CleanTitle(title, isFile: false), lessons) { Files = files });
         var childResources = new List<ResourceFolder>();
         foreach (var sub in SubDirs(dir))
-            any |= CollectSections(root, sub, $"{title} / {Path.GetFileName(sub)}", into, childResources);
+            any |= CollectSections(lib, sub, $"{title} / {Path.GetFileName(sub)}", into, childResources);
 
         // A folder without any lessons is course material (code, slides...): show it as one resource.
         if (!any && Directory.EnumerateFileSystemEntries(dir).Any(e => !Path.GetFileName(e).StartsWith('.')))
-            AddResource(root, dir, title, resources);
+            AddResource(lib, dir, title, resources);
         else
             resources.AddRange(childResources);
         return any;
     }
 
-    private static void AddResource(string root, string dir, string title, List<ResourceFolder> into)
+    private static void AddResource(LibraryInfo lib, string dir, string title, List<ResourceFolder> into)
     {
-        var rel = Path.GetRelativePath(root, dir);
+        var rel = lib.KeyPrefix + Path.GetRelativePath(lib.Root, dir);
         into.Add(new ResourceFolder(StableId("res:" + rel), title, rel, dir));
     }
 
@@ -299,38 +459,78 @@ public sealed partial class CourseLibrary(CourseHubOptions options, IWebHostEnvi
     public static bool IsCodeProject(string dir) =>
         ProjectMarkers.Any(m => Directory.EnumerateFiles(dir, m).Any());
 
-    private List<Lesson> LessonsIn(string root, string dir)
+    /// <summary>Lessons in a folder, plus files that don't belong to any lesson.</summary>
+    private (List<Lesson> Lessons, List<Attachment> Files) LessonsIn(LibraryInfo lib, string dir)
     {
-        var all = Directory.EnumerateFiles(dir).Where(f => !Path.GetFileName(f).StartsWith('.')).ToList();
-        var subtitles = all.Where(f => SubtitleExt.Contains(Path.GetExtension(f))).ToList();
-        var files = all
-            .Where(f => VideoExt.Contains(Path.GetExtension(f)) || ArticleExt.Contains(Path.GetExtension(f)))
+        var all = Directory.EnumerateFiles(dir)
+            .Where(f => !Path.GetFileName(f).StartsWith('.') && !SkipFiles.Contains(Path.GetFileName(f)))
             .OrderBy(f => Path.GetFileName(f), NaturalComparer.Instance)
             .ToList();
+        var videos = all.Where(f => VideoExt.Contains(Path.GetExtension(f))).ToList();
+        var stems = videos.Select(v => Path.GetFileNameWithoutExtension(v)).OrderByDescending(s => s.Length).ToList();
 
-        var result = new Lesson[files.Count];
-        Parallel.For(0, files.Count, i =>
+        // Anything (other than subtitles) whose name starts with a video's name belongs to that video:
+        // "3. Generics.mp4" gets "3. Generics.pdf", "3. Generics - slides.pptx", "3. Generics_code.zip".
+        string? OwnerStem(string file)
         {
-            var f = files[i];
+            var name = Path.GetFileName(file);
+            return stems.FirstOrDefault(stem =>
+                name.Length > stem.Length && name.StartsWith(stem, StringComparison.OrdinalIgnoreCase)
+                && " .-_([".Contains(name[stem.Length]));
+        }
+
+        var attachmentsByStem = new Dictionary<string, List<Attachment>>(StringComparer.OrdinalIgnoreCase);
+        var looseFiles = new List<Attachment>();
+        var lessonFiles = new List<string>();
+        var subtitles = new List<string>();
+        foreach (var f in all)
+        {
+            var ext = Path.GetExtension(f);
+            if (VideoExt.Contains(ext)) { lessonFiles.Add(f); continue; }
+            if (SubtitleExt.Contains(ext)) { subtitles.Add(f); continue; }
+            var owner = OwnerStem(f);
+            if (owner is not null)
+            {
+                if (!attachmentsByStem.TryGetValue(owner, out var list)) attachmentsByStem[owner] = list = [];
+                list.Add(MakeAttachment(lib, f));
+            }
+            else if (ArticleExt.Contains(ext)) lessonFiles.Add(f);
+            else looseFiles.Add(MakeAttachment(lib, f));
+        }
+
+        var result = new Lesson[lessonFiles.Count];
+        Parallel.For(0, lessonFiles.Count, i =>
+        {
+            var f = lessonFiles[i];
             var info = new FileInfo(f);
             var kind = VideoExt.Contains(info.Extension) ? LessonKind.Video : LessonKind.Article;
-            var rel = Path.GetRelativePath(root, f);
+            var rel = lib.KeyPrefix + Path.GetRelativePath(lib.Root, f);
             double? duration = kind == LessonKind.Video
-                ? _durationCache.GetOrAdd($"{f}|{info.Length}|{info.LastWriteTimeUtc.Ticks}", _ => Mp4Duration.TryRead(f))
+                ? _durationCache.GetOrAdd($"{f}|{info.Length}|{info.LastWriteTimeUtc.Ticks}", _ => Mp4Duration.TryRead(f) ?? probe.Duration(f))
                 : null;
             string? subtitle = null;
+            var stem = Path.GetFileNameWithoutExtension(f);
             if (kind == LessonKind.Video)
             {
-                var stem = Path.Combine(dir, Path.GetFileNameWithoutExtension(f));
+                var stemPath = Path.Combine(dir, stem);
                 subtitle = subtitles
-                    .Where(s => s.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase))
+                    .Where(s => s.StartsWith(stemPath + ".", StringComparison.OrdinalIgnoreCase))
                     .OrderBy(s => Path.GetExtension(s).Equals(".vtt", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                     .ThenBy(s => s.Length)
                     .FirstOrDefault();
             }
-            result[i] = new Lesson(StableId(rel), CleanTitle(info.Name, isFile: true), rel, f, kind, info.Length, duration, subtitle);
+            result[i] = new Lesson(StableId(rel), CleanTitle(info.Name, isFile: true), rel, f, kind, info.Length, duration, subtitle)
+            {
+                Attachments = kind == LessonKind.Video && attachmentsByStem.TryGetValue(stem, out var a) ? a : [],
+            };
         });
-        return [.. result];
+        return ([.. result], looseFiles);
+    }
+
+    private static Attachment MakeAttachment(LibraryInfo lib, string file)
+    {
+        var rel = lib.KeyPrefix + Path.GetRelativePath(lib.Root, file);
+        return new Attachment(StableId("att:" + rel), Path.GetFileName(file), file, new FileInfo(file).Length);
     }
 
     /// <summary>Flat course: start a new section at each "Introduction"/"Overview" style lesson.</summary>

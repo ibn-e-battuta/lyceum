@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Downloads · CourseHub</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0f1115" />
+  <script>
+    try { const t = localStorage.getItem("coursehub.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+  </script>
+  <link rel="stylesheet" href="/app.css" />
+  <style>
+    .dl-layout { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+    .dl-player video { width: 100%; max-height: 60vh; background: #000; border-radius: 12px; display: block; }
+    .dl-player h2 { font-size: 18px; margin: 12px 0 4px; }
+    .dl-course { margin-top: 24px; }
+    .dl-course h3 { font-size: 16px; margin-bottom: 8px; }
+    .dl-item { display: grid; grid-template-columns: 112px 1fr auto; gap: 12px; align-items: center; padding: 8px; border-radius: 10px; cursor: pointer; }
+    .dl-item:hover { background: var(--panel); }
+    .dl-item.current { background: rgba(139,108,255,.14); }
+    .dl-item img { width: 112px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; background: var(--panel-2); }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: 999px; background: var(--panel-2); }
+    .status.offline { color: #ffc94d; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="logo">▶</span> CourseHub</a>
+    <span class="status" id="net"></span>
+    <span class="muted tiny push" id="usage"></span>
+  </header>
+  <main class="dl-layout">
+    <h1 class="page-title">Downloads</h1>
+    <p class="muted" id="intro">Lessons you saved on this device. They play without an internet connection, and your progress syncs when you're back online.</p>
+    <section class="dl-player" id="player" hidden>
+      <video id="video" controls playsinline></video>
+      <h2 id="now-title"></h2>
+      <div class="muted tiny" id="now-course"></div>
+    </section>
+    <div id="list"></div>
+  </main>
+  <script type="module">
+    import { list, removeLesson, usage, queueProgress, flushProgress, updatePosition } from "/offline.js";
+
+    const $ = (id) => document.getElementById(id);
+    const fmt = (b) => b > 1e9 ? (b / 1e9).toFixed(1) + " GB" : (b / 1e6).toFixed(0) + " MB";
+    const clock = (s) => { s = Math.round(s || 0); const m = Math.floor(s / 60); return `${m}:${String(s % 60).padStart(2, "0")}`; };
+    let current = null, lastSave = 0;
+
+    function net() {
+      $("net").textContent = navigator.onLine ? "● Online" : "● Offline";
+      $("net").className = "status" + (navigator.onLine ? "" : " offline");
+      if (navigator.onLine) flushProgress();
+    }
+    addEventListener("online", net); addEventListener("offline", net); net();
+
+    async function render() {
+      const items = await list();
+      const u = await usage();
+      $("usage").textContent = u.quota ? `${fmt(u.used)} of ${fmt(u.quota)} used` : "";
+      const root = $("list");
+      root.innerHTML = "";
+      if (!items.length) {
+        root.innerHTML = `<div class="empty small"><p class="muted">Nothing saved yet. Open a lesson and choose <strong>⬇ Save offline</strong>, or save a whole course from its lesson list.</p></div>`;
+        return;
+      }
+      const byCourse = Map.groupBy ? Map.groupBy(items, (i) => i.courseTitle) : items.reduce((m, i) => m.set(i.courseTitle, [...(m.get(i.courseTitle) || []), i]), new Map());
+      for (const [course, lessons] of byCourse) {
+        const sec = document.createElement("section");
+        sec.className = "dl-course";
+        sec.innerHTML = `<h3></h3>`;
+        sec.querySelector("h3").textContent = `${course} · ${lessons.length}`;
+        for (const l of lessons) {
+          const row = document.createElement("div");
+          row.className = "dl-item" + (current?.id === l.id ? " current" : "");
+          row.innerHTML = `<img alt="" loading="lazy"><div><div class="t"></div><div class="muted tiny"></div></div><button class="icon-btn" title="Remove download">🗑</button>`;
+          row.querySelector("img").src = `/offline-thumb/${l.id}`;
+          row.querySelector(".t").textContent = l.title;
+          row.querySelector(".tiny").textContent = `${l.duration ? clock(l.duration) + " · " : ""}${fmt(l.size || 0)}${l.position > 5 ? " · watched to " + clock(l.position) : ""}`;
+          row.onclick = () => play(l);
+          row.querySelector("button").onclick = async (e) => { e.stopPropagation(); await removeLesson(l.id); render(); };
+          sec.appendChild(row);
+        }
+        root.appendChild(sec);
+      }
+    }
+
+    function play(l) {
+      current = l;
+      $("player").hidden = false;
+      $("now-title").textContent = l.title;
+      $("now-course").textContent = l.courseTitle;
+      const v = $("video");
+      v.src = `/offline-media/${l.id}`;
+      v.onloadedmetadata = () => { if (l.position > 5 && l.position < v.duration - 10) v.currentTime = l.position; v.play().catch(() => {}); };
+      scrollTo({ top: 0, behavior: "smooth" });
+      render();
+    }
+
+    const v = $("video");
+    function save(force) {
+      if (!current || !v.duration) return;
+      if (!force && Date.now() - lastSave < 5000) return;
+      lastSave = Date.now();
+      const completed = v.currentTime / v.duration >= 0.92;
+      current.position = v.currentTime;
+      queueProgress(current.id, v.currentTime, v.duration, completed);
+      updatePosition(current.id, v.currentTime);
+      if (navigator.onLine) flushProgress();
+    }
+    v.addEventListener("timeupdate", () => save(false));
+    v.addEventListener("pause", () => save(true));
+    v.addEventListener("ended", () => save(true));
+    addEventListener("pagehide", () => save(true));
+
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+    render();
+  </script>
+</body>
+</html>

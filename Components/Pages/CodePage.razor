@@ -87,6 +87,7 @@ else
     {
         await EnsureUserAsync();
         resource = Library.GetResource(ResourceId);
+        if (resource is { } r0 && !CourseLibrary.CanAccess(r0.Course, Access)) resource = null;
         if (resource is null) return;
         files = Code.ListFiles(resource.Value.Folder);
         var start = File ?? files.FirstOrDefault(f => f.RelativePath.EndsWith("README.md", StringComparison.OrdinalIgnoreCase))?.RelativePath

@@ -22,6 +22,18 @@ export function setRate(rate) {
   if (state?.video) state.video.playbackRate = rate;
 }
 
+/**
+ * Decides how to play a video: the original file if this browser supports its codecs, else a lossless
+ * MP4 repackage if the video codec itself is supported, else an H.264 conversion.
+ */
+export function chooseSource(directMime, remuxMime) {
+  const probe = document.createElement("video");
+  const ok = (type) => !!type && probe.canPlayType(type) !== "";
+  if (ok(directMime)) return "direct";
+  if (ok(remuxMime)) return "remux";
+  return "h264";
+}
+
 export function setSkipIntro(seconds) { if (state) state.skipIntro = seconds; }
 export function getTime() { return state?.video?.currentTime ?? 0; }
 export function pause() { state?.video?.pause(); }
@@ -209,8 +221,15 @@ export function detach() {
 let transcript = null;
 
 document.addEventListener("timeupdate", (e) => {
-  if (!transcript || !state || e.target !== state.video) return;
-  highlight(state.video.currentTime);
+  if (!state || e.target !== state.video) return;
+  // Chapter bar playhead
+  const bar = document.getElementById("chapter-bar");
+  if (bar) {
+    const d = Number(bar.dataset.duration) || state.video.duration || 0;
+    const head = bar.querySelector(".playhead");
+    if (head && d > 0) head.style.left = `${Math.min(100, (state.video.currentTime / d) * 100)}%`;
+  }
+  if (transcript) highlight(state.video.currentTime);
 }, true);
 
 function highlight(t) {

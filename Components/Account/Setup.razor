@@ -6,15 +6,24 @@
 @inject UserService Users
 @inject CourseLibrary Library
 @inject NavigationManager Nav
+@inject OidcOptions Oidc
 
 <PageTitle>Welcome · CourseHub</PageTitle>
 
 <main class="auth">
     <div class="auth-card">
         <div class="auth-brand"><span class="logo">▶</span> CourseHub</div>
-        <h1>Welcome!</h1>
-        <p class="muted">Create the admin account. You can add more people later in Settings.</p>
+        <h1>@L["Welcome!"]</h1>
+        <p class="muted">@L["Create the admin account. You can add more people later in Settings."]</p>
+        @if (Oidc.Enabled)
+        {
+            <a class="btn primary wide sso-btn" href="/auth/oidc/login">@L["Sign in with {0}", Oidc.DisplayName]</a>
+            <p class="muted tiny">@L["The first person to sign in becomes the admin."]</p>
+            @if (!Oidc.DisablePasswordLogin) { <div class="divider">@L["or create a local admin"]</div> }
+        }
         <p class="muted tiny">Found @Library.Courses.Count courses in <code>@Library.RootPath</code>.</p>
+        @if (!Oidc.Enabled || !Oidc.DisablePasswordLogin)
+        {
         <EditForm Model="Input" method="post" OnValidSubmit="CreateAsync" FormName="setup">
             <DataAnnotationsValidator />
             <label class="field"><span>Username</span><InputText @bind-Value="Input!.Username" autocomplete="username" autofocus /></label>
@@ -22,8 +31,9 @@
             <label class="field"><span>Repeat password</span><InputText type="password" @bind-Value="Input!.Confirm" autocomplete="new-password" /></label>
             @if (error is not null) { <p class="error tiny">@error</p> }
             <ValidationSummary class="error tiny" />
-            <button class="btn primary wide" type="submit">Create admin account</button>
+            <button class="btn @(Oidc.Enabled ? "ghost" : "primary") wide" type="submit">@L["Create admin account"]</button>
         </EditForm>
+        }
     </div>
 </main>
 

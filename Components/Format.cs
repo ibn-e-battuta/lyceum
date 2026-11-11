@@ -19,6 +19,15 @@ public static class Format
         return $"{Math.Max(1, (int)Math.Round(t.TotalMinutes))}min";
     }
 
+    public static string Bytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double v = bytes;
+        var i = 0;
+        while (v >= 1024 && i < units.Length - 1) { v /= 1024; i++; }
+        return i == 0 ? $"{bytes} B" : $"{v:0.#} {units[i]}";
+    }
+
     public static string Ago(DateTime utc)
     {
         var d = DateTime.UtcNow - utc;

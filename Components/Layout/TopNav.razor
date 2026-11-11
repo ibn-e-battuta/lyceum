@@ -1,4 +1,5 @@
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 @implements IDisposable
 
 <header class="topbar">
@@ -6,12 +7,17 @@
     <nav class="nav">
         @foreach (var (href, label) in Links)
         {
-            <a href="@href" class="@(IsActive(href) ? "active" : "")">@label</a>
+            <a href="@href" class="@(IsActive(href) ? "active" : "")">@L[label]</a>
         }
+        <a href="/offline.html" target="_top" title="@L["Lessons saved on this device"]">@L["Downloads"]</a>
+        <AuthorizeView Policy="Admin">
+            <a href="/admin" class="@(IsActive("/admin") ? "active" : "")">@L["Admin"]</a>
+        </AuthorizeView>
     </nav>
     @ChildContent
+    <button class="icon-btn theme-btn" title="@L["Theme: {0}", L[ThemeLabel]]" @onclick="CycleTheme">@ThemeIcon</button>
     <AuthorizeView>
-        <a class="user-chip hide-mobile" href="/settings" title="Account settings">@context.User.Identity?.Name</a>
+        <a class="user-chip hide-mobile" href="/settings" title="@L["Account settings"]">@context.User.Identity?.Name</a>
     </AuthorizeView>
 </header>
 
@@ -23,6 +29,10 @@
         ("/", "My learning"), ("/paths", "Paths"), ("/notes", "Notes"), ("/stats", "Stats"), ("/settings", "Settings"),
     ];
 
+    private string theme = "system";
+    private string ThemeIcon => theme switch { "light" => "☀", "dark" => "☾", _ => "◐" };
+    private string ThemeLabel => theme switch { "light" => "Light", "dark" => "Dark", _ => "System" };
+
     private bool IsActive(string href)
     {
         var path = "/" + Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0];
@@ -30,6 +40,24 @@
     }
 
     protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            theme = await JS.InvokeAsync<string>("coursehubTheme.get");
+            StateHasChanged();
+        }
+        catch (JSException) { }
+    }
+
+    private async Task CycleTheme()
+    {
+        theme = theme switch { "system" => "light", "light" => "dark", _ => "system" };
+        await JS.InvokeVoidAsync("coursehubTheme.set", theme);
+    }
+
     private void OnLocationChanged(object? s, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) => InvokeAsync(StateHasChanged);
     public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
 }

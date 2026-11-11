@@ -14,6 +14,73 @@ public class AppUser
     public string SecurityStamp { get; set; } = Guid.NewGuid().ToString("N");
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
+    /// <summary>Shown on certificates and the activity feed; falls back to the username.</summary>
+    public string? DisplayName { get; set; }
+    /// <summary>Comma-separated library ids this user can see; null means every library. Admins always see all.</summary>
+    public string? LibraryAccess { get; set; }
+    /// <summary>Show this user's course starts/completions in the household activity feed.</summary>
+    public bool ShareActivity { get; set; } = true;
+}
+
+/// <summary>A folder of courses. Library #1 is the one from configuration (CourseHub:CoursesRoot).</summary>
+public class LibraryEntity
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Path { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+}
+
+public class ApiKey
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public string Name { get; set; } = "";
+    /// <summary>First characters of the key, shown so people can tell keys apart.</summary>
+    public string Prefix { get; set; } = "";
+    /// <summary>SHA-256 of the full key. The key itself is only shown once.</summary>
+    public string KeyHash { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+    public DateTime? LastUsedAt { get; set; }
+}
+
+/// <summary>Links an account at an OpenID Connect provider (Authentik, Authelia, Keycloak…) to a local user.</summary>
+public class ExternalLogin
+{
+    public string Provider { get; set; } = "";
+    public string Subject { get; set; } = "";
+    public int UserId { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>Runtime settings that admins change in the UI (AI provider, notifications, transcoding…).</summary>
+public class AppSetting
+{
+    public string Key { get; set; } = "";
+    public string Value { get; set; } = "";
+}
+
+public enum ActivityType { CourseStarted = 0, LessonCompleted = 1, CourseCompleted = 2 }
+
+public class ActivityEvent
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public ActivityType Type { get; set; }
+    public string CoursePath { get; set; } = "";
+    public string? LessonPath { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>Cached AI output for a lesson (summary, quiz, flashcards), shared by everyone.</summary>
+public class AiContent
+{
+    public int Id { get; set; }
+    public string LessonPath { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public string Content { get; set; } = "";
+    public string Model { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
 }
 
 /// <summary>Watch progress for one lesson, keyed by user and the lesson's path relative to the courses folder.</summary>
@@ -109,6 +176,12 @@ public class ProgressDb(DbContextOptions<ProgressDb> options) : DbContext(option
     public DbSet<LearningPathItem> PathItems => Set<LearningPathItem>();
     public DbSet<TranscriptCue> Cues => Set<TranscriptCue>();
     public DbSet<TranscriptSource> TranscriptSources => Set<TranscriptSource>();
+    public DbSet<LibraryEntity> Libraries => Set<LibraryEntity>();
+    public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+    public DbSet<ExternalLogin> ExternalLogins => Set<ExternalLogin>();
+    public DbSet<AppSetting> Settings => Set<AppSetting>();
+    public DbSet<ActivityEvent> Activity => Set<ActivityEvent>();
+    public DbSet<AiContent> AiContent => Set<AiContent>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -137,6 +210,24 @@ public class ProgressDb(DbContextOptions<ProgressDb> options) : DbContext(option
         });
         b.Entity<TranscriptCue>().HasIndex(c => c.LessonPath);
         b.Entity<TranscriptSource>().HasKey(s => s.LessonPath);
+        b.Entity<LibraryEntity>().ToTable("Libraries");
+        b.Entity<ApiKey>(e =>
+        {
+            e.HasIndex(k => k.KeyHash).IsUnique();
+            e.HasIndex(k => k.UserId);
+        });
+        b.Entity<ExternalLogin>(e =>
+        {
+            e.HasKey(x => new { x.Provider, x.Subject });
+            e.HasIndex(x => x.UserId);
+        });
+        b.Entity<AppSetting>().HasKey(x => x.Key);
+        b.Entity<ActivityEvent>(e =>
+        {
+            e.HasIndex(a => a.CreatedAt);
+            e.HasIndex(a => new { a.UserId, a.CoursePath, a.Type });
+        });
+        b.Entity<AiContent>().HasIndex(a => new { a.LessonPath, a.Kind }).IsUnique();
     }
 
     /// <summary>

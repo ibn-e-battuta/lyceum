@@ -6,68 +6,142 @@
 @inject CourseLibrary Library
 @inject MediaTools Tools
 @inject TranscriptService Transcripts
+@inject Transcoder Transcoder
 @inject UserDataService UserData
 @inject UserService Users
+@inject ApiKeyService ApiKeys
+@inject AppSettingsService AppSettings
+@inject AiService Ai
+@inject NotificationService Notifications
+@inject OidcOptions Oidc
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 
-<PageTitle>Settings · CourseHub</PageTitle>
+<PageTitle>@L["Settings"] · CourseHub</PageTitle>
 
 <TopNav />
 
 <main class="home narrow settings">
-    <h1 class="page-title">Settings</h1>
+    <h1 class="page-title">@L["Settings"]</h1>
+    <nav class="settings-nav">
+        <a href="/settings#account">@L["Account"]</a>
+        <a href="/settings#api">@L["API keys"]</a>
+        @if (IsAdmin)
+        {
+            <a href="/settings#users">@L["Users"]</a>
+            <a href="/settings#libraries">@L["Libraries"]</a>
+            <a href="/settings#playback">@L["Playback"]</a>
+            <a href="/settings#transcripts">@L["Transcripts"]</a>
+            <a href="/settings#ai">AI</a>
+            <a href="/settings#notifications">@L["Notifications"]</a>
+        }
+        <a href="/settings#backup">@L["Backup"]</a>
+    </nav>
 
-    <section class="panel">
-        <h2>Account</h2>
-        <p>Signed in as <strong>@UserName</strong>@(IsAdmin ? " (admin)" : "").</p>
+    <section class="panel" id="account">
+        <h2>@L["Account"]</h2>
+        <p>@L["Signed in as {0}", UserName]@(IsAdmin ? " (" + L["admin"] + ")" : "").</p>
         <div class="row form-row">
-            <input type="password" placeholder="Current password" autocomplete="current-password" @bind="currentPassword" />
-            <input type="password" placeholder="New password (8+ characters)" autocomplete="new-password" @bind="newPassword" />
-            <button class="btn ghost small" disabled="@(string.IsNullOrEmpty(currentPassword) || string.IsNullOrEmpty(newPassword))" @onclick="ChangeOwnPassword">Change password</button>
+            <input placeholder="@L["Display name (shown on certificates and in the activity feed)"]" @bind="displayName" />
+            <label class="toggle"><input type="checkbox" @bind="shareActivity" /> @L["Share my progress in the household feed"]</label>
+            <button class="btn ghost small" @onclick="SaveProfile">@L["Save"]</button>
+        </div>
+        <div class="row form-row">
+            <span class="muted tiny">@L["Language"]</span>
+            @foreach (var (code, name) in Localizer.Languages)
+            {
+                <a class="chip @(Localizer.CurrentLanguage == code ? "active" : "")" href="@($"/culture?culture={code}&redirect=/settings")" target="_top">@name</a>
+            }
+        </div>
+        <h3>@L["Change password"]</h3>
+        <div class="row form-row">
+            <input type="password" placeholder="@L["Current password"]" autocomplete="current-password" @bind="currentPassword" />
+            <input type="password" placeholder="@L["New password (8+ characters)"]" autocomplete="new-password" @bind="newPassword" />
+            <button class="btn ghost small" disabled="@(string.IsNullOrEmpty(currentPassword) || string.IsNullOrEmpty(newPassword))" @onclick="ChangeOwnPassword">@L["Change password"]</button>
         </div>
         @if (accountMessage is not null) { <p class="tiny @(accountFailed ? "error" : "good")">@accountMessage</p> }
         <form method="post" action="/auth/logout" class="logout-form">
-            <button class="btn ghost small" type="submit">Sign out</button>
+            <button class="btn ghost small" type="submit">@L["Sign out"]</button>
         </form>
+    </section>
+
+    <section class="panel" id="api">
+        <h2>@L["API keys"]</h2>
+        <p class="muted tiny">
+            @L["For scripts and apps. Send the key as Authorization: Bearer <key>. Keys act as you and can see what you can see."]
+            <a class="accent" href="/openapi/v1.json" target="_blank">OpenAPI</a>
+        </p>
+        @if (newKey is not null)
+        {
+            <p class="good tiny">@L["Copy this key now — it won't be shown again:"]</p>
+            <div class="api-key">@newKey</div>
+        }
+        @foreach (var k in apiKeys)
+        {
+            <div class="job">
+                <span class="job-title">@k.Name <code>@k.Prefix…</code></span>
+                <span class="muted tiny">@L["created {0}", Format.Ago(k.CreatedAt)] · @(k.LastUsedAt is { } u ? L["used {0}", Format.Ago(u)] : L["never used"])</span>
+                <button class="icon-btn" title="@L["Delete"]" @onclick="() => DeleteKey(k)">🗑</button>
+            </div>
+        }
+        <div class="row form-row">
+            <input placeholder="@L["Key name, e.g. Home Assistant"]" @bind="newKeyName" />
+            <button class="btn ghost small" @onclick="CreateKey">@L["Create key"]</button>
+        </div>
     </section>
 
     @if (IsAdmin)
     {
-        <section class="panel">
-            <h2>Users</h2>
-            <p class="muted tiny">Everyone gets their own progress, notes, bookmarks, stats and learning paths. Admins can also manage users, rescan the library and run transcription.</p>
+        <section class="panel" id="users">
+            <h2>@L["Users"]</h2>
+            <p class="muted tiny">@L["Everyone gets their own progress, notes, bookmarks, stats and learning paths. Admins see every library."]</p>
+            <p class="muted tiny">@L["Single sign-on:"] @(Oidc.Enabled ? L["on ({0})", Oidc.Authority ?? ""] : L["off — set the Oidc__ environment variables to connect Authentik, Authelia, Keycloak…"])</p>
             <table class="stats-table users-table">
-                <thead><tr><th>User</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead>
+                <thead><tr><th>@L["User"]</th><th>@L["Role"]</th>@if (Library.Libraries.Count > 1) { <th>@L["Libraries"]</th> }<th>@L["Last sign-in"]</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var u in users)
                     {
                         <tr>
-                            <td>@u.Username @(u.Id == UserId ? "(you)" : "")</td>
+                            <td>@u.Name @(u.Id == UserId ? "(" + L["you"] + ")" : "")<div class="muted tiny">@u.Username</div></td>
                             <td>
                                 <label class="toggle">
                                     <input type="checkbox" checked="@u.IsAdmin" disabled="@(u.Id == UserId)" @onchange="e => SetAdmin(u, (bool)e.Value!)" /> admin
                                 </label>
                             </td>
-                            <td class="muted tiny">@(u.LastLoginAt is { } t ? Format.Ago(t) : "never")</td>
+                            @if (Library.Libraries.Count > 1)
+                            {
+                                <td>
+                                    @if (u.IsAdmin) { <span class="muted tiny">@L["all"]</span> }
+                                    else
+                                    {
+                                        <div class="access-list">
+                                            @foreach (var lib in Library.Libraries)
+                                            {
+                                                <label class="toggle tiny"><input type="checkbox" checked="@(u.AllowedLibraries is null || u.AllowedLibraries.Contains(lib.Id))" @onchange="e => SetAccess(u, lib.Id, (bool)e.Value!)" /> @lib.Name</label>
+                                            }
+                                        </div>
+                                    }
+                                </td>
+                            }
+                            <td class="muted tiny">@(u.LastLoginAt is { } t ? Format.Ago(t) : L["never"])</td>
                             <td class="row">
                                 @if (resetFor == u.Id)
                                 {
-                                    <input type="password" placeholder="New password" autocomplete="new-password" @bind="resetPassword" />
-                                    <button class="btn primary small" @onclick="() => ResetPassword(u)">Save</button>
-                                    <button class="btn ghost small" @onclick="() => resetFor = null">Cancel</button>
+                                    <input type="password" placeholder="@L["New password"]" autocomplete="new-password" @bind="resetPassword" />
+                                    <button class="btn primary small" @onclick="() => ResetPassword(u)">@L["Save"]</button>
+                                    <button class="btn ghost small" @onclick="() => resetFor = null">@L["Cancel"]</button>
                                 }
                                 else if (u.Id != UserId)
                                 {
-                                    <button class="btn ghost small" @onclick="() => { resetFor = u.Id; resetPassword = string.Empty; }">Reset password</button>
+                                    <button class="btn ghost small" @onclick="() => { resetFor = u.Id; resetPassword = string.Empty; }">@L["Reset password"]</button>
                                     @if (confirmDelete == u.Id)
                                     {
-                                        <button class="btn danger small" @onclick="() => DeleteUser(u)">Delete @u.Username and all their data</button>
-                                        <button class="btn ghost small" @onclick="() => confirmDelete = null">Cancel</button>
+                                        <button class="btn danger small" @onclick="() => DeleteUser(u)">@L["Delete {0} and all their data", u.Username]</button>
+                                        <button class="btn ghost small" @onclick="() => confirmDelete = null">@L["Cancel"]</button>
                                     }
                                     else
                                     {
-                                        <button class="btn ghost small" @onclick="() => confirmDelete = u.Id">Delete</button>
+                                        <button class="btn ghost small" @onclick="() => confirmDelete = u.Id">@L["Delete"]</button>
                                     }
                                 }
                             </td>
@@ -75,136 +149,220 @@
                     }
                 </tbody>
             </table>
-            <h3>Add a user</h3>
+            <h3>@L["Add a user"]</h3>
             <div class="row form-row">
-                <input placeholder="Username" autocomplete="off" @bind="newUser" />
-                <input type="password" placeholder="Password (8+ characters)" autocomplete="new-password" @bind="newUserPassword" />
+                <input placeholder="@L["Username"]" autocomplete="off" @bind="newUser" />
+                <input type="password" placeholder="@L["Password (8+ characters)"]" autocomplete="new-password" @bind="newUserPassword" />
                 <label class="toggle"><input type="checkbox" @bind="newUserAdmin" /> admin</label>
-                <button class="btn primary small" @onclick="AddUser">Add user</button>
+                <button class="btn primary small" @onclick="AddUser">@L["Add user"]</button>
             </div>
             @if (usersMessage is not null) { <p class="tiny @(usersFailed ? "error" : "good")">@usersMessage</p> }
         </section>
 
-        <section class="panel">
-            <h2>Library</h2>
-            <p>Courses are read from <code>@Library.RootPath</code>. @(Library.Courses.Count) courses, last scanned @Format.Ago(Library.LastScan).</p>
-            <p class="muted tiny">New, renamed or removed course folders are picked up automatically. Add a <code>course.json</code> to a course folder to set its title, author, description, cover or sections (see the README).</p>
-            <button class="btn ghost" @onclick="Rescan" disabled="@scanning">@(scanning ? "Scanning…" : "↻ Rescan now")</button>
+        <section class="panel" id="libraries">
+            <h2>@L["Libraries"]</h2>
+            <p class="muted tiny">@L["Each library is a folder of courses. Inside Docker, mount the folder into the container first and use the path inside the container (e.g. /media/kids)."]</p>
+            @foreach (var lib in Library.Libraries)
+            {
+                <div class="job">
+                    @if (editLib == lib.Id)
+                    {
+                        <input @bind="editLibName" />
+                        @if (lib.Id != 1) { <input @bind="editLibPath" /> }
+                        <button class="btn primary small" @onclick="() => SaveLibrary(lib)">@L["Save"]</button>
+                        <button class="btn ghost small" @onclick="() => editLib = null">@L["Cancel"]</button>
+                    }
+                    else
+                    {
+                        <span class="job-title"><strong>@lib.Name</strong> <code>@lib.Root</code> @(lib.Id == 1 ? "· " + L["from configuration"] : "")</span>
+                        <span class="muted tiny">@L["{0} courses", Library.Courses.Count(c => c.LibraryId == lib.Id)]</span>
+                        <button class="icon-btn" title="@L["Edit"]" @onclick="() => { editLib = lib.Id; editLibName = lib.Name; editLibPath = lib.Root; }">✎</button>
+                        @if (lib.Id != 1) { <button class="icon-btn" title="@L["Remove library (files stay on disk)"]" @onclick="() => RemoveLibrary(lib)">🗑</button> }
+                    }
+                </div>
+            }
+            <div class="row form-row">
+                <input placeholder="@L["Name, e.g. Kids"]" @bind="newLibName" />
+                <input placeholder="@L["Folder, e.g. /media/kids"]" @bind="newLibPath" />
+                <button class="btn ghost small" @onclick="AddLibrary">@L["Add library"]</button>
+                <button class="btn ghost small" @onclick="Rescan" disabled="@scanning">@(scanning ? L["Scanning…"] : "↻ " + L["Rescan now"])</button>
+            </div>
+            @if (libMessage is not null) { <p class="tiny @(libFailed ? "error" : "good")">@libMessage</p> }
+            <p class="muted tiny">@L["Last scanned {0}. New, renamed or removed course folders are picked up automatically.", Format.Ago(Library.LastScan)]</p>
+        </section>
+
+        <section class="panel" id="playback">
+            <h2>@L["Video playback"]</h2>
+            <p class="muted tiny">@L["Videos a browser can't play (MKV, AVI, HEVC on some browsers, 10-bit…) are repackaged or converted to H.264 the first time someone opens them. Repackaging is quick and lossless; converting takes a while and uses the encoder below."]</p>
+            <div class="row form-row">
+                <label class="field"><span>@L["Encoder"]</span>
+                    <select @bind="server.HardwareAcceleration">
+                        <option value="none">@L["Software (libx264) — works everywhere"]</option>
+                        <option value="vaapi">VAAPI — Intel / AMD (Linux, /dev/dri)</option>
+                        <option value="qsv">Intel Quick Sync (QSV)</option>
+                        <option value="nvenc">NVIDIA NVENC</option>
+                        <option value="videotoolbox">Apple VideoToolbox (macOS)</option>
+                    </select>
+                </label>
+                @if (server.HardwareAcceleration == "vaapi")
+                {
+                    <label class="field"><span>@L["VAAPI device"]</span><input @bind="server.VaapiDevice" /></label>
+                }
+                <label class="field"><span>@L["Keep converted videos up to (GB)"]</span><input type="number" min="1" max="2000" @bind="server.TranscodeCacheGb" /></label>
+            </div>
+            <label class="toggle"><input type="checkbox" @bind="server.AutoPrepareVideos" /> @L["Convert new videos in the background as soon as they're found"]</label>
+            <div class="row">
+                <button class="btn primary small" @onclick="SaveServer">@L["Save"]</button>
+                <button class="btn ghost small" @onclick="PrepareAll" disabled="@preparingAll">@(preparingAll ? L["Checking videos…"] : L["Convert all incompatible videos now"])</button>
+                <button class="btn ghost small" @onclick="ClearTranscodes">@L["Clear converted videos ({0})", Format.Bytes(transcodeBytes)]</button>
+            </div>
+            @if (serverMessage is not null) { <p class="tiny good">@serverMessage</p> }
+            @JobList(Transcoder.Jobs.Select(j => (j.Title + (j.Variant == PlaybackVariant.Remux ? " (remux)" : " (H.264)"), j.State, j.Percent, j.Error)).ToList(), Transcoder.ClearFinished)
+        </section>
+
+        <section class="panel" id="transcripts">
+            <h2>@L["Transcripts & subtitles"]</h2>
+            <p class="muted tiny">@L["Subtitle files (.srt/.vtt) next to a video are used automatically. Everything else can be transcribed on this server with Whisper — nothing is uploaded."]</p>
+            <ul class="checklist">
+                <li class="@(Tools.Ffmpeg is null ? "bad" : "ok")">ffmpeg — @(Tools.Ffmpeg ?? L["not found"])</li>
+                <li class="@(Tools.Whisper is null ? "bad" : "ok")">whisper.cpp — @(Tools.Whisper ?? L["not found"])</li>
+                <li class="@(Tools.ModelPresent ? "ok" : "bad")">
+                    @L["Speech model"]
+                    <select @bind="server.WhisperModel" @bind:after="SaveServer">
+                        @foreach (var (file, label) in WhisperModels) { <option value="@file">@label</option> }
+                    </select>
+                    @if (Tools.ModelPresent)
+                    {
+                        <span>@L["ready"]</span>
+                    }
+                    else if (Transcripts.ModelDownload is { Error: null } d)
+                    {
+                        <span>@L["downloading… {0}%", d.Percent.ToString("0")]</span>
+                        <div class="bar"><span style="width:@(d.Percent.ToString("0", System.Globalization.CultureInfo.InvariantCulture))%"></span></div>
+                    }
+                    else
+                    {
+                        <button class="btn primary small" @onclick="DownloadModel">@L["Download from Hugging Face"]</button>
+                        @if (Transcripts.ModelDownload is { Error: { } err }) { <div class="error tiny">@L["Download failed:"] @err</div> }
+                    }
+                </li>
+            </ul>
+            <div class="row form-row">
+                <label class="field"><span>@L["Spoken language"]</span>
+                    <select @bind="server.WhisperLanguage" @bind:after="SaveServer" disabled="@(!Tools.ModelIsMultilingual)">
+                        <option value="">@L["Default ({0})", "en"]</option>
+                        <option value="auto">@L["Detect automatically"]</option>
+                        @foreach (var (c, n) in SpokenLanguages) { <option value="@c">@n</option> }
+                    </select>
+                </label>
+            </div>
+            @if (!Tools.ModelIsMultilingual) { <p class="muted tiny">@L["English-only models (*.en) can't detect or translate other languages. Pick a multilingual model for non-English courses."]</p> }
+            <label class="toggle"><input type="checkbox" @bind="server.TranslateToEnglish" @bind:after="SaveServer" disabled="@(!Tools.ModelIsMultilingual)" /> @L["Also create English captions for non-English lessons"]</label>
+            <label class="toggle"><input type="checkbox" @bind="server.AutoTranscribeNewVideos" @bind:after="SaveServer" /> @L["Transcribe new videos automatically when they're added"]</label>
+            <p>@L["{0} lessons have searchable transcripts.", indexed]</p>
+            @if (Tools.CanTranscribe)
+            {
+                <div class="row">
+                    <select @bind="courseToTranscribe">
+                        <option value="">@L["Choose a course…"]</option>
+                        @foreach (var c in Library.Courses.Where(c => c.VideoCount > 0))
+                        {
+                            <option value="@c.Id">@c.Title (@L["{0} left", c.AllLessons.Count(l => l.Kind == LessonKind.Video && !Transcripts.HasTranscript(l))])</option>
+                        }
+                    </select>
+                    <button class="btn primary small" disabled="@string.IsNullOrEmpty(courseToTranscribe)" @onclick="QueueCourse">@L["Transcribe course"]</button>
+                    <button class="btn ghost small" @onclick="QueueAll">@L["Transcribe everything"]</button>
+                    @if (Transcripts.Jobs.Any(j => j.State is JobState.Queued or JobState.Running))
+                    {
+                        <button class="btn ghost small" @onclick="Transcripts.CancelAll">@L["Stop"]</button>
+                    }
+                </div>
+            }
+            @if (message is not null) { <p class="muted tiny">@message</p> }
+            @JobList(Transcripts.Jobs.Select(j => (j.Title, j.State, j.Percent, j.Error)).ToList(), Transcripts.ClearFinished)
+        </section>
+
+        <section class="panel" id="ai">
+            <h2>@L["AI study tools"]</h2>
+            <p class="muted tiny">@L["Summaries, quizzes, flashcards, \"ask this course\" and caption translation. Works with any OpenAI-compatible server: Ollama (http://localhost:11434/v1), LM Studio, llama.cpp, vLLM — or a cloud provider, in which case transcripts are sent to it."]</p>
+            <label class="toggle"><input type="checkbox" @bind="aiOn" /> @L["Turn on AI features"]</label>
+            <div class="row form-row">
+                <label class="field"><span>@L["Server URL"]</span><input @bind="aiBaseUrl" placeholder="http://localhost:11434/v1" /></label>
+                <label class="field"><span>@L["Model"]</span><input @bind="aiModel" placeholder="llama3.2" /></label>
+                <label class="field"><span>@L["API key (if needed)"]</span><input type="password" @bind="aiKey" autocomplete="off" placeholder="@(string.IsNullOrEmpty(ai.ApiKey) ? "" : "••••••••")" /></label>
+            </div>
+            <div class="row">
+                <button class="btn primary small" @onclick="SaveAi">@L["Save"]</button>
+                <button class="btn ghost small" @onclick="TestAi" disabled="@testingAi">@(testingAi ? L["Testing…"] : L["Test connection"])</button>
+            </div>
+            @if (aiMessage is not null) { <p class="tiny @(aiFailed ? "error" : "good")">@aiMessage</p> }
+            <p class="muted tiny">@L["Docker: to reach Ollama on the host, use http://host.docker.internal:11434/v1 and add extra_hosts: [\"host.docker.internal:host-gateway\"] to your compose file."]</p>
+        </section>
+
+        <section class="panel" id="notifications">
+            <h2>@L["Notifications"]</h2>
+            <p class="muted tiny">@L["Send events to ntfy (phone push notifications) or any webhook (Home Assistant, Discord via a bridge, n8n…)."]</p>
+            <label class="field"><span>@L["Public address of CourseHub (for links in notifications)"]</span>
+                <input @bind="server.PublicUrl" placeholder="https://courses.example.com" @bind:after="SaveServer" />
+            </label>
+            @foreach (var t in notify.Targets)
+            {
+                <div class="job">
+                    <span class="job-title"><strong>@(t.Type == "ntfy" ? "ntfy" : "Webhook")</strong> <code>@t.Url</code></span>
+                    <span class="muted tiny">@string.Join(", ", EventsOf(t))</span>
+                    <button class="btn ghost small" @onclick="() => TestTarget(t)">@L["Test"]</button>
+                    <button class="icon-btn" title="@L["Delete"]" @onclick="() => RemoveTarget(t)">🗑</button>
+                </div>
+            }
+            <h3>@L["Add a destination"]</h3>
+            <div class="row form-row">
+                <select @bind="newTargetType">
+                    <option value="ntfy">ntfy</option>
+                    <option value="webhook">Webhook (JSON POST)</option>
+                </select>
+                <input placeholder="@(newTargetType == "ntfy" ? "https://ntfy.sh/my-courses" : "https://example.com/hook")" @bind="newTargetUrl" />
+                <input type="password" placeholder="@L["Token (optional)"]" @bind="newTargetToken" autocomplete="off" />
+            </div>
+            <div class="row">
+                <label class="toggle tiny"><input type="checkbox" @bind="newOnAdded" /> @L["New course"]</label>
+                <label class="toggle tiny"><input type="checkbox" @bind="newOnRemoved" /> @L["Course removed"]</label>
+                <label class="toggle tiny"><input type="checkbox" @bind="newOnTranscripts" /> @L["Transcripts finished"]</label>
+                <label class="toggle tiny"><input type="checkbox" @bind="newOnCompleted" /> @L["Someone finished a course"]</label>
+                <button class="btn ghost small" @onclick="AddTarget" disabled="@string.IsNullOrWhiteSpace(newTargetUrl)">@L["Add"]</button>
+            </div>
+            @if (notifyMessage is not null) { <p class="tiny @(notifyFailed ? "error" : "good")">@notifyMessage</p> }
         </section>
     }
 
     <section class="panel">
-        <h2>Watch on your phone or tablet</h2>
+        <h2>@L["Watch on your phone or tablet"]</h2>
         @if (shareUrls.Count == 0)
         {
-            <p class="muted">Open CourseHub on your other devices using this server's address.</p>
+            <p class="muted">@L["Open CourseHub on your other devices using this server's address."]</p>
         }
         else
         {
             <div class="lan">
                 <div id="qr" class="qr"></div>
                 <div>
-                    <p>On your phone or tablet, open:</p>
+                    <p>@L["On your phone or tablet, open:"]</p>
                     @foreach (var u in shareUrls) { <div class="lan-url"><code>@u</code></div> }
                 </div>
             </div>
         }
-        <p class="muted tiny">
-            To install it like an app: <strong>iPhone/iPad</strong> — Safari → Share → <em>Add to Home Screen</em>.
-            <strong>Android</strong> — Chrome → ⋮ → <em>Install app</em>. Desktop Chrome/Edge show an install icon in the address bar.
-            Your progress is stored on the server, so it's the same on every device.
-        </p>
+        <p class="muted tiny">@L["To install it like an app: iPhone/iPad — Safari → Share → Add to Home Screen. Android — Chrome → ⋮ → Install app. Use ⬇ Save offline on a lesson to watch without internet."]</p>
     </section>
 
-    @if (IsAdmin)
-    {
-    <section class="panel">
-        <h2>Transcripts &amp; subtitles</h2>
-        <p class="muted tiny">
-            Subtitle files (<code>.srt</code>/<code>.vtt</code>) next to a video are used automatically. For everything else CourseHub can
-            transcribe the audio on the server with Whisper. Nothing is uploaded anywhere.
-        </p>
-        <ul class="checklist">
-            <li class="@(Tools.Ffmpeg is null ? "bad" : "ok")">ffmpeg — @(Tools.Ffmpeg ?? "not found")</li>
-            <li class="@(Tools.Whisper is null ? "bad" : "ok")">whisper.cpp — @(Tools.Whisper ?? "not found")</li>
-            <li class="@(Tools.ModelPresent ? "ok" : "bad")">
-                Speech model <code>@Tools.ModelName</code> —
-                @if (Tools.ModelPresent)
-                {
-                    <span>@(new FileInfo(Tools.ModelPath).Length / 1024 / 1024) MB, ready</span>
-                }
-                else if (Transcripts.ModelDownload is { Error: null } d)
-                {
-                    <span>downloading… @d.Percent.ToString("0")% (@(d.Bytes / 1024 / 1024) MB)</span>
-                    <div class="bar"><span style="width:@(d.Percent.ToString("0", System.Globalization.CultureInfo.InvariantCulture))%"></span></div>
-                }
-                else
-                {
-                    <span>not downloaded.</span>
-                    <button class="btn primary small" @onclick="DownloadModel">Download (~148 MB from Hugging Face)</button>
-                    @if (Transcripts.ModelDownload is { Error: { } err }) { <div class="error tiny">Download failed: @err</div> }
-                }
-            </li>
-        </ul>
-        <p>
-            @indexed lessons have searchable transcripts.
-            @if (Tools.CanTranscribe)
-            {
-                <span class="muted tiny">Whisper runs at roughly 10–20× real time on a modern CPU, so all @Format.Long(Library.Courses.Sum(c => c.TotalSeconds)) can take many hours. CourseHub stays usable meanwhile.</span>
-            }
-        </p>
-        @if (Tools.CanTranscribe)
-        {
-            <div class="row">
-                <select @bind="courseToTranscribe">
-                    <option value="">Choose a course…</option>
-                    @foreach (var c in Library.Courses.Where(c => c.VideoCount > 0))
-                    {
-                        <option value="@c.Id">@c.Title (@c.AllLessons.Count(l => l.Kind == LessonKind.Video && !Transcripts.HasTranscript(l)) left)</option>
-                    }
-                </select>
-                <button class="btn primary small" disabled="@string.IsNullOrEmpty(courseToTranscribe)" @onclick="QueueCourse">Transcribe course</button>
-                <button class="btn ghost small" @onclick="QueueAll">Transcribe everything</button>
-                @if (Transcripts.Jobs.Any(j => j.State is JobState.Queued or JobState.Running))
-                {
-                    <button class="btn ghost small" @onclick="Transcripts.CancelAll">Stop</button>
-                }
-            </div>
-        }
-        @if (message is not null) { <p class="muted tiny">@message</p> }
-        @if (Transcripts.Jobs.Count > 0)
-        {
-            var jobs = Transcripts.Jobs;
-            <div class="jobs">
-                <div class="muted tiny">
-                    @jobs.Count(j => j.State == JobState.Running) running · @jobs.Count(j => j.State == JobState.Queued) queued ·
-                    @jobs.Count(j => j.State == JobState.Done) done · @jobs.Count(j => j.State == JobState.Failed) failed
-                    <button class="link" @onclick="Transcripts.ClearFinished">clear finished</button>
-                </div>
-                @foreach (var j in jobs.Take(12))
-                {
-                    <div class="job @j.State.ToString().ToLowerInvariant()">
-                        <span class="job-title">@j.Title</span>
-                        <span class="muted tiny">
-                            @(j.State switch { JobState.Running => $"{j.Percent}%", JobState.Failed => j.Error, _ => j.State.ToString() })
-                        </span>
-                    </div>
-                }
-            </div>
-        }
-    </section>
-    }
-
-    <section class="panel">
-        <h2>Backup</h2>
-        <p class="muted tiny">Your own progress, notes, bookmarks, stats, favourites and learning paths, in one JSON file. A backup can be restored into any account.</p>
+    <section class="panel" id="backup">
+        <h2>@L["Backup"]</h2>
+        <p class="muted tiny">@L["Your own progress, notes, bookmarks, stats, favourites and learning paths, in one JSON file. A backup can be restored into any account."]</p>
         <div class="row">
-            <a class="btn primary" href="/api/export" download>⬇ Export backup</a>
-            <a class="btn ghost" href="/api/notes.md" download>⬇ Notes as Markdown</a>
+            <a class="btn primary" href="/api/export" download>⬇ @L["Export backup"]</a>
+            <a class="btn ghost" href="/api/notes.md" download>⬇ @L["Notes as Markdown"]</a>
         </div>
-        <h3>Restore</h3>
-        <p class="muted tiny">Restoring <strong>replaces</strong> everything currently saved in your account with the backup's contents.</p>
-        <label class="toggle"><input type="checkbox" @bind="confirmRestore" /> I understand my current data will be replaced</label>
+        <h3>@L["Restore"]</h3>
+        <p class="muted tiny">@L["Restoring replaces everything currently saved in your account with the backup's contents."]</p>
+        <label class="toggle"><input type="checkbox" @bind="confirmRestore" /> @L["I understand my current data will be replaced"]</label>
         <InputFile OnChange="Restore" accept=".json,application/json" disabled="@(!confirmRestore)" />
         @if (restoreMessage is not null) { <p class="tiny @(restoreFailed ? "error" : "good")">@restoreMessage</p> }
     </section>
@@ -212,17 +370,35 @@
     @if (IsAdmin)
     {
         <section class="panel">
-            <h2>Storage</h2>
-            <p class="muted tiny">Thumbnails, generated transcripts and the speech model live in <code>@Tools.DataDir</code>.</p>
-            <p>@thumbCount thumbnails · @transcriptCount generated transcripts</p>
-            <button class="btn ghost small" @onclick="ClearThumbs">Clear thumbnails</button>
+            <h2>@L["Storage"]</h2>
+            <p class="muted tiny">@L["Thumbnails, converted videos, transcripts and speech models live in {0}.", Tools.DataDir]</p>
+            <p>@L["{0} thumbnails · {1} generated transcripts", thumbCount, transcriptCount]</p>
+            <button class="btn ghost small" @onclick="ClearThumbs">@L["Clear thumbnails"]</button>
         </section>
     }
 </main>
 
 @code {
+    private static readonly (string File, string Label)[] WhisperModels =
+    [
+        ("ggml-base.en.bin", "base.en — English, 148 MB, fast"),
+        ("ggml-base.bin", "base — multilingual, 148 MB, fast"),
+        ("ggml-small.en.bin", "small.en — English, 488 MB, better"),
+        ("ggml-small.bin", "small — multilingual, 488 MB, better"),
+        ("ggml-medium.bin", "medium — multilingual, 1.5 GB, slow"),
+        ("ggml-large-v3-turbo.bin", "large-v3-turbo — multilingual, 1.6 GB, best"),
+    ];
+
+    private static readonly (string Code, string Name)[] SpokenLanguages =
+    [
+        ("en", "English"), ("de", "Deutsch"), ("es", "Español"), ("fr", "Français"), ("it", "Italiano"), ("pt", "Português"),
+        ("nl", "Nederlands"), ("pl", "Polski"), ("tr", "Türkçe"), ("ru", "Русский"), ("uk", "Українська"), ("ar", "العربية"),
+        ("hi", "हिन्दी"), ("ur", "اردو"), ("zh", "中文"), ("ja", "日本語"), ("ko", "한국어"),
+    ];
+
     private List<string> shareUrls = [];
     private List<UserInfo> users = [];
+    private List<ApiKeyInfo> apiKeys = [];
     private int indexed;
     private bool scanning;
     private string courseToTranscribe = "";
@@ -231,11 +407,17 @@
     private string? restoreMessage;
     private bool restoreFailed;
     private int thumbCount, transcriptCount;
+    private long transcodeBytes;
     private bool qrDrawn;
 
+    private string displayName = "";
+    private bool shareActivity = true;
     private string currentPassword = "", newPassword = "";
     private string? accountMessage;
     private bool accountFailed;
+
+    private string newKeyName = "";
+    private string? newKey;
 
     private string newUser = "", newUserPassword = "";
     private bool newUserAdmin;
@@ -244,11 +426,67 @@
     private string? usersMessage;
     private bool usersFailed;
 
+    private int? editLib;
+    private string editLibName = "", editLibPath = "", newLibName = "", newLibPath = "";
+    private string? libMessage;
+    private bool libFailed;
+
+    private MutableServer server = new();
+    private string? serverMessage;
+    private bool preparingAll;
+
+    private AiSettings ai = new();
+    private string aiBaseUrl = "", aiModel = "", aiKey = "";
+    private bool aiOn;
+    private string? aiMessage;
+    private bool aiFailed, testingAi;
+
+    private NotificationSettings notify = new();
+    private string newTargetType = "ntfy", newTargetUrl = "", newTargetToken = "";
+    private bool newOnAdded = true, newOnRemoved, newOnTranscripts = true, newOnCompleted;
+    private string? notifyMessage;
+    private bool notifyFailed;
+
+    /// <summary>Editable copy of <see cref="ServerSettings"/> (records are immutable).</summary>
+    private sealed class MutableServer
+    {
+        public string? PublicUrl { get; set; }
+        public bool AutoTranscribeNewVideos { get; set; }
+        public bool AutoPrepareVideos { get; set; }
+        public string HardwareAcceleration { get; set; } = "none";
+        public string VaapiDevice { get; set; } = "/dev/dri/renderD128";
+        public int TranscodeCacheGb { get; set; } = 50;
+        public string? WhisperLanguage { get; set; }
+        public string? WhisperModel { get; set; }
+        public bool TranslateToEnglish { get; set; }
+    }
+
     protected override async Task OnInitializedAsync()
     {
         await EnsureUserAsync();
         Transcripts.Changed += OnChanged;
+        Transcoder.Changed += OnChanged;
         shareUrls = ShareUrls();
+        var me = await Users.GetAsync(UserId);
+        displayName = me?.DisplayName ?? "";
+        shareActivity = me?.ShareActivity ?? true;
+        apiKeys = await ApiKeys.ListAsync(UserId);
+
+        if (IsAdmin)
+        {
+            var s = await AppSettings.GetAsync<ServerSettings>();
+            server = new MutableServer
+            {
+                PublicUrl = s.PublicUrl, AutoTranscribeNewVideos = s.AutoTranscribeNewVideos, AutoPrepareVideos = s.AutoPrepareVideos,
+                HardwareAcceleration = s.HardwareAcceleration, VaapiDevice = s.VaapiDevice, TranscodeCacheGb = s.TranscodeCacheGb,
+                WhisperLanguage = s.WhisperLanguage, WhisperModel = s.WhisperModel ?? Tools.ModelName, TranslateToEnglish = s.TranslateToEnglish,
+            };
+            ai = await AppSettings.GetAsync<AiSettings>();
+            aiBaseUrl = ai.BaseUrl;
+            aiOn = ai.Enabled;
+            aiModel = ai.Model;
+            notify = await AppSettings.GetAsync<NotificationSettings>();
+        }
         await Refresh();
     }
 
@@ -259,6 +497,7 @@
         indexed = await Transcripts.IndexedLessonCountAsync();
         thumbCount = Directory.EnumerateFiles(Tools.ThumbDir, "*.jpg").Count();
         transcriptCount = Directory.EnumerateFiles(Tools.TranscriptDir, "*.vtt").Count();
+        transcodeBytes = Transcoder.CacheBytes();
     }
 
     private DateTime lastRefresh;
@@ -274,7 +513,11 @@
         StateHasChanged();
     });
 
-    public void Dispose() => Transcripts.Changed -= OnChanged;
+    public void Dispose()
+    {
+        Transcripts.Changed -= OnChanged;
+        Transcoder.Changed -= OnChanged;
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -305,15 +548,54 @@
             .ToList();
     }
 
+    private RenderFragment JobList(List<(string Title, JobState State, int Percent, string? Error)> jobs, Action clear) => __builder =>
+    {
+        if (jobs.Count == 0) return;
+        <div class="jobs">
+            <div class="muted tiny">
+                @L["{0} running · {1} queued · {2} done · {3} failed", jobs.Count(j => j.State == JobState.Running), jobs.Count(j => j.State == JobState.Queued), jobs.Count(j => j.State == JobState.Done), jobs.Count(j => j.State == JobState.Failed)]
+                <button class="link" @onclick="clear">@L["clear finished"]</button>
+            </div>
+            @foreach (var j in jobs.Take(12))
+            {
+                <div class="job @j.State.ToString().ToLowerInvariant()">
+                    <span class="job-title">@j.Title</span>
+                    <span class="muted tiny">@(j.State switch { JobState.Running => $"{j.Percent}%", JobState.Failed => j.Error, _ => L[j.State.ToString()] })</span>
+                </div>
+            }
+        </div>
+    };
+
     // ---------- account ----------
+
+    private async Task SaveProfile()
+    {
+        await Users.UpdateProfileAsync(UserId, displayName, shareActivity);
+        accountFailed = false;
+        accountMessage = L["Saved."];
+    }
 
     private async Task ChangeOwnPassword()
     {
         var err = await Users.ChangePasswordAsync(UserId, currentPassword, newPassword);
         accountFailed = err is not null;
-        accountMessage = err ?? "Password changed. Other devices have been signed out; sign in again on them.";
+        accountMessage = err ?? L["Password changed. Other devices have been signed out; sign in again on them."];
         currentPassword = newPassword = "";
         if (err is null) Nav.NavigateTo("/login?changed=1", forceLoad: true);
+    }
+
+    private async Task CreateKey()
+    {
+        newKey = await ApiKeys.CreateAsync(UserId, newKeyName);
+        newKeyName = "";
+        apiKeys = await ApiKeys.ListAsync(UserId);
+    }
+
+    private async Task DeleteKey(ApiKeyInfo k)
+    {
+        await ApiKeys.DeleteAsync(UserId, k.Id);
+        apiKeys = await ApiKeys.ListAsync(UserId);
+        newKey = null;
     }
 
     // ---------- users (admin) ----------
@@ -328,7 +610,7 @@
     {
         if (!IsAdmin) return;
         var (_, err) = await Users.CreateAsync(newUser, newUserPassword, newUserAdmin);
-        Report(err, $"Added {newUser.Trim()}.");
+        Report(err, L["Added {0}.", newUser.Trim()]);
         if (err is null) { newUser = newUserPassword = ""; newUserAdmin = false; }
         await Refresh();
     }
@@ -336,14 +618,25 @@
     private async Task SetAdmin(UserInfo u, bool admin)
     {
         if (!IsAdmin) return;
-        Report(await Users.SetAdminAsync(u.Id, admin), admin ? $"{u.Username} is now an admin." : $"{u.Username} is no longer an admin.");
+        Report(await Users.SetAdminAsync(u.Id, admin), admin ? L["{0} is now an admin.", u.Username] : L["{0} is no longer an admin.", u.Username]);
+        await Refresh();
+    }
+
+    private async Task SetAccess(UserInfo u, int libraryId, bool allowed)
+    {
+        if (!IsAdmin) return;
+        var current = u.AllowedLibraries?.ToHashSet() ?? Library.Libraries.Select(l => l.Id).ToHashSet();
+        if (allowed) current.Add(libraryId); else current.Remove(libraryId);
+        var all = Library.Libraries.All(l => current.Contains(l.Id));
+        await Users.SetLibraryAccessAsync(u.Id, all ? null : current);
+        Report(null, L["Updated {0}'s libraries.", u.Username]);
         await Refresh();
     }
 
     private async Task ResetPassword(UserInfo u)
     {
         if (!IsAdmin) return;
-        Report(await Users.ChangePasswordAsync(u.Id, null, resetPassword), $"Password for {u.Username} changed.");
+        Report(await Users.ChangePasswordAsync(u.Id, null, resetPassword), L["Password for {0} changed.", u.Username]);
         resetFor = null;
         resetPassword = "";
     }
@@ -351,12 +644,35 @@
     private async Task DeleteUser(UserInfo u)
     {
         if (!IsAdmin) return;
-        Report(await Users.DeleteAsync(u.Id), $"Deleted {u.Username}.");
+        Report(await Users.DeleteAsync(u.Id), L["Deleted {0}.", u.Username]);
         confirmDelete = null;
         await Refresh();
     }
 
-    // ---------- library & transcripts (admin) ----------
+    // ---------- libraries (admin) ----------
+
+    private void LibReport(string? err, string ok) { libFailed = err is not null; libMessage = err ?? ok; }
+
+    private async Task AddLibrary()
+    {
+        if (!IsAdmin) return;
+        var err = await Library.AddLibraryAsync(newLibName, newLibPath);
+        LibReport(err, L["Added {0}.", newLibName]);
+        if (err is null) newLibName = newLibPath = "";
+    }
+
+    private async Task SaveLibrary(LibraryInfo lib)
+    {
+        if (!IsAdmin) return;
+        LibReport(await Library.UpdateLibraryAsync(lib.Id, editLibName, lib.Id == 1 ? null : editLibPath), L["Saved."]);
+        editLib = null;
+    }
+
+    private async Task RemoveLibrary(LibraryInfo lib)
+    {
+        if (!IsAdmin) return;
+        LibReport(await Library.RemoveLibraryAsync(lib.Id), L["Removed {0}. The files are still on disk.", lib.Name]);
+    }
 
     private async Task Rescan()
     {
@@ -366,20 +682,135 @@
         scanning = false;
     }
 
-    private Task DownloadModel()
+    // ---------- playback & transcripts (admin) ----------
+
+    private async Task SaveServer()
     {
-        if (IsAdmin) _ = Transcripts.DownloadModelAsync();
-        return Task.CompletedTask;
+        if (!IsAdmin) return;
+        await AppSettings.SaveAsync(new ServerSettings
+        {
+            PublicUrl = string.IsNullOrWhiteSpace(server.PublicUrl) ? null : server.PublicUrl.Trim().TrimEnd('/'),
+            AutoTranscribeNewVideos = server.AutoTranscribeNewVideos,
+            AutoPrepareVideos = server.AutoPrepareVideos,
+            HardwareAcceleration = server.HardwareAcceleration,
+            VaapiDevice = server.VaapiDevice,
+            TranscodeCacheGb = Math.Clamp(server.TranscodeCacheGb, 1, 2000),
+            WhisperLanguage = string.IsNullOrWhiteSpace(server.WhisperLanguage) ? null : server.WhisperLanguage,
+            WhisperModel = server.WhisperModel,
+            TranslateToEnglish = server.TranslateToEnglish,
+        });
+        serverMessage = L["Saved."];
+        StateHasChanged();
+    }
+
+    private async Task PrepareAll()
+    {
+        if (!IsAdmin) return;
+        preparingAll = true;
+        var n = 0;
+        foreach (var c in Library.Courses) n += await Transcoder.PrepareCourseAsync(c);
+        preparingAll = false;
+        serverMessage = n == 0 ? L["Every video already plays in browsers."] : L["Queued {0} videos for conversion.", n];
+    }
+
+    private async Task ClearTranscodes()
+    {
+        if (!IsAdmin) return;
+        Transcoder.ClearCache();
+        await Refresh();
+    }
+
+    private async Task DownloadModel()
+    {
+        if (!IsAdmin) return;
+        await SaveServer();
+        _ = Transcripts.DownloadModelAsync();
     }
 
     private void QueueAll()
     {
-        if (IsAdmin) message = $"Queued {Transcripts.EnqueueAll()} lessons.";
+        if (IsAdmin) message = L["Queued {0} lessons.", Transcripts.EnqueueAll()];
     }
 
     private void QueueCourse()
     {
-        if (IsAdmin && Library.GetCourse(courseToTranscribe) is { } c) message = $"Queued {Transcripts.EnqueueCourse(c)} lessons from {c.Title}.";
+        if (IsAdmin && Library.GetCourse(courseToTranscribe) is { } c) message = L["Queued {0} lessons from {1}.", Transcripts.EnqueueCourse(c), c.Title];
+    }
+
+    // ---------- AI (admin) ----------
+
+    private async Task SaveAi()
+    {
+        if (!IsAdmin) return;
+        ai = ai with
+        {
+            Enabled = aiOn,
+            BaseUrl = string.IsNullOrWhiteSpace(aiBaseUrl) ? "http://localhost:11434/v1" : aiBaseUrl.Trim().TrimEnd('/'),
+            Model = string.IsNullOrWhiteSpace(aiModel) ? "llama3.2" : aiModel.Trim(),
+            ApiKey = string.IsNullOrEmpty(aiKey) ? ai.ApiKey : aiKey,
+        };
+        await AppSettings.SaveAsync(ai);
+        aiKey = "";
+        aiFailed = false;
+        aiMessage = L["Saved."];
+    }
+
+    private async Task TestAi()
+    {
+        if (!IsAdmin) return;
+        await SaveAi();
+        testingAi = true;
+        var err = await Ai.TestAsync();
+        testingAi = false;
+        aiFailed = err is not null;
+        aiMessage = err ?? L["It works: the model answered."];
+    }
+
+    // ---------- notifications (admin) ----------
+
+    private IEnumerable<string> EventsOf(NotificationTarget t)
+    {
+        if (t.OnCourseAdded) yield return L["New course"];
+        if (t.OnCourseRemoved) yield return L["Course removed"];
+        if (t.OnTranscriptsDone) yield return L["Transcripts finished"];
+        if (t.OnCourseCompleted) yield return L["Someone finished a course"];
+    }
+
+    private async Task AddTarget()
+    {
+        if (!IsAdmin || !Uri.TryCreate(newTargetUrl.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        {
+            notifyFailed = true;
+            notifyMessage = L["Enter a full http(s) URL."];
+            return;
+        }
+        notify = notify with
+        {
+            Targets = [.. notify.Targets, new NotificationTarget
+            {
+                Type = newTargetType, Url = uri.ToString(), Token = string.IsNullOrWhiteSpace(newTargetToken) ? null : newTargetToken.Trim(),
+                OnCourseAdded = newOnAdded, OnCourseRemoved = newOnRemoved, OnTranscriptsDone = newOnTranscripts, OnCourseCompleted = newOnCompleted,
+            }],
+        };
+        await AppSettings.SaveAsync(notify);
+        newTargetUrl = newTargetToken = "";
+        notifyFailed = false;
+        notifyMessage = L["Added."];
+    }
+
+    private async Task RemoveTarget(NotificationTarget t)
+    {
+        if (!IsAdmin) return;
+        notify = notify with { Targets = notify.Targets.Where(x => x.Id != t.Id).ToList() };
+        await AppSettings.SaveAsync(notify);
+    }
+
+    private async Task TestTarget(NotificationTarget t)
+    {
+        if (!IsAdmin) return;
+        var err = await Notifications.SendToAsync(t, new Notification("test", "CourseHub test", "Notifications from CourseHub work. 🎉", "/", null));
+        notifyFailed = err is not null;
+        notifyMessage = err is null ? L["Sent. Check your device."] : L["Failed: {0}", err];
     }
 
     private async Task Restore(InputFileChangeEventArgs e)
@@ -394,7 +825,7 @@
         catch (Exception ex)
         {
             restoreFailed = true;
-            restoreMessage = "Restore failed: " + ex.Message;
+            restoreMessage = L["Restore failed:"] + " " + ex.Message;
         }
     }
 

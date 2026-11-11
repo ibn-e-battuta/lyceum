@@ -22,7 +22,7 @@
         }
         <select class="push" @bind="courseFilter">
             <option value="">All courses</option>
-            @foreach (var c in Library.Courses.Where(c => notes.Any(n => n.CoursePath == c.FolderName)))
+            @foreach (var c in Library.CoursesFor(Access).Where(c => notes.Any(n => n.CoursePath == c.FolderName)))
             {
                 <option value="@c.FolderName">@c.Title</option>
             }
@@ -76,6 +76,7 @@
     private string courseFilter = "";
 
     private List<Note> Visible => notes.Where(n =>
+        Library.GetCourseByFolder(n.CoursePath) is not { } nc || CourseLibrary.CanAccess(nc, Access)).Where(n =>
         (kind == "All" || (kind == "Notes") == (n.Kind == NoteKind.Note)) &&
         (courseFilter == "" || n.CoursePath == courseFilter) &&
         (query.Trim() == "" || n.Text.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)

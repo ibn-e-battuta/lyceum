@@ -1,0 +1,78 @@
+@page "/certificate/{CourseId}"
+@inherits AppPage
+@inject CourseLibrary Library
+@inject ProgressService ProgressService
+@inject ActivityService Activity
+@inject UserService Users
+@inject IJSRuntime JS
+
+<PageTitle>@L["Certificate"] · @course?.Title</PageTitle>
+
+<main class="certificate-page">
+    @if (course is null)
+    {
+        <div class="empty"><h1>@L["Course not found"]</h1><a href="/">@L["Back to my courses"]</a></div>
+    }
+    else if (!complete)
+    {
+        <div class="empty">
+            <h1>@L["Not finished yet"]</h1>
+            <p class="muted">@L["Complete all {0} lessons of {1} to get your certificate. You've done {2}.", stats.Total, course.Title, stats.Completed]</p>
+            <a class="accent" href="@($"course/{course.Id}")">@L["Continue the course"] →</a>
+        </div>
+    }
+    else
+    {
+        <div>
+            <article class="certificate">
+                <div class="cert-brand">▶ CourseHub</div>
+                <h1 class="cert-title">@L["Certificate of Completion"]</h1>
+                <div class="cert-sub">@L["This certifies that"]</div>
+                <div class="cert-name">@name</div>
+                <div class="cert-sub">@L["has completed every lesson of"]</div>
+                <div class="cert-course">@course.Title</div>
+                @if (!string.IsNullOrWhiteSpace(course.Author)) { <div class="cert-sub">@L["by {0}", course.Author]</div> }
+                <div class="cert-meta">
+                    <div>@L["Completed"]<strong>@completedAt.ToLocalTime().ToString("d MMMM yyyy")</strong></div>
+                    <div>@L["Lessons"]<strong>@course.LessonCount</strong></div>
+                    @if (course.TotalSeconds > 0) { <div>@L["Video"]<strong>@Format.Long(course.TotalSeconds)</strong></div> }
+                    <div>@L["Certificate ID"]<strong>@certificateId</strong></div>
+                </div>
+                <div class="cert-seal">🎓</div>
+            </article>
+            <div class="cert-actions">
+                <button class="btn primary" @onclick="Print">@L["Print or save as PDF"]</button>
+                <a class="btn ghost" href="@($"course/{course.Id}")">@L["Back to the course"]</a>
+            </div>
+        </div>
+    }
+</main>
+
+@code {
+    [Parameter] public string CourseId { get; set; } = "";
+
+    private Course? course;
+    private CourseStats stats = new(0, 0, null, null);
+    private bool complete;
+    private string name = "";
+    private DateTime completedAt;
+    private string certificateId = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await EnsureUserAsync();
+        course = Library.GetCourse(CourseId);
+        if (course is null || !CourseLibrary.CanAccess(course, Access)) { course = null; return; }
+        var progress = await ProgressService.ForCourseAsync(UserId, course);
+        stats = ProgressService.Stats(course, progress);
+        complete = stats.Total > 0 && stats.Completed == stats.Total;
+        if (!complete) return;
+
+        name = (await Users.GetAsync(UserId))?.Name ?? UserName;
+        // Prefer the recorded completion; fall back to when the last lesson was finished.
+        completedAt = await Activity.CompletedAtAsync(UserId, course) ?? progress.Values.Where(p => p.Completed).Max(p => p.UpdatedAt);
+        certificateId = CourseLibrary.StableId($"cert:{UserId}:{course.FolderName}:{completedAt:yyyyMMdd}").ToUpperInvariant()[..10];
+    }
+
+    private async Task Print() => await JS.InvokeVoidAsync("print");
+}

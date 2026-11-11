@@ -7,7 +7,16 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CourseHub.Services;
 
-public sealed record UserInfo(int Id, string Username, bool IsAdmin, DateTime CreatedAt, DateTime? LastLoginAt);
+public sealed record UserInfo(int Id, string Username, bool IsAdmin, DateTime CreatedAt, DateTime? LastLoginAt,
+    string? DisplayName, string? LibraryAccess, bool ShareActivity)
+{
+    public string Name => string.IsNullOrWhiteSpace(DisplayName) ? Username : DisplayName;
+
+    /// <summary>Library ids this user may open; null means all.</summary>
+    public IReadOnlySet<int>? AllowedLibraries => IsAdmin || LibraryAccess is null
+        ? null
+        : LibraryAccess.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToHashSet();
+}
 
 public static class Claims
 {
@@ -44,7 +53,90 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
     {
         await using var db = await dbFactory.CreateDbContextAsync();
         return await db.Users.AsNoTracking().OrderBy(u => u.Username)
-            .Select(u => new UserInfo(u.Id, u.Username, u.IsAdmin, u.CreatedAt, u.LastLoginAt)).ToListAsync();
+            .Select(u => new UserInfo(u.Id, u.Username, u.IsAdmin, u.CreatedAt, u.LastLoginAt, u.DisplayName, u.LibraryAccess, u.ShareActivity)).ToListAsync();
+    }
+
+    private readonly ConcurrentDictionary<int, UserInfo> _info = new();
+
+    /// <summary>Cached profile used for access checks on every request.</summary>
+    public async Task<UserInfo?> GetAsync(int userId)
+    {
+        if (_info.TryGetValue(userId, out var cached)) return cached;
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var u = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == userId);
+        if (u is null) return null;
+        var info = new UserInfo(u.Id, u.Username, u.IsAdmin, u.CreatedAt, u.LastLoginAt, u.DisplayName, u.LibraryAccess, u.ShareActivity);
+        _info[userId] = info;
+        return info;
+    }
+
+    public async Task<IReadOnlySet<int>?> AllowedLibrariesAsync(int userId) =>
+        await GetAsync(userId) is { } u ? u.AllowedLibraries : new HashSet<int>(); // unknown user: nothing
+
+    /// <summary>null = every library.</summary>
+    public async Task SetLibraryAccessAsync(int userId, IEnumerable<int>? libraryIds)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await db.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(x => x.SetProperty(u => u.LibraryAccess,
+            libraryIds is null ? null : string.Join(',', libraryIds.Distinct().Order())));
+        _info.TryRemove(userId, out _);
+    }
+
+    public async Task UpdateProfileAsync(int userId, string? displayName, bool shareActivity)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var name = string.IsNullOrWhiteSpace(displayName) ? null : displayName.Trim()[..Math.Min(displayName.Trim().Length, 80)];
+        await db.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(x => x
+            .SetProperty(u => u.DisplayName, name)
+            .SetProperty(u => u.ShareActivity, shareActivity));
+        _info.TryRemove(userId, out _);
+    }
+
+    /// <summary>Signs a user in from an external identity provider, linking or creating the local account.</summary>
+    public async Task<(AppUser? User, string? Error)> ExternalSignInAsync(
+        string provider, string subject, string? preferredUsername, string? displayName, bool isAdmin, bool autoCreate, bool matchByUsername, bool syncAdmin)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var link = await db.ExternalLogins.FindAsync(provider, subject);
+        AppUser? user = link is null ? null : await db.Users.FindAsync(link.UserId);
+
+        var wanted = string.Concat((preferredUsername ?? displayName ?? "user").Where(c => !char.IsWhiteSpace(c)));
+        if (wanted.Length == 0) wanted = "user";
+        if (wanted.Length > 64) wanted = wanted[..64];
+
+        if (user is null && matchByUsername)
+            user = await db.Users.FirstOrDefaultAsync(u => u.Username == wanted);
+
+        if (user is null)
+        {
+            if (!autoCreate) return (null, "Your account isn't set up in CourseHub yet. Ask an admin to create it.");
+            var name = wanted;
+            for (var i = 2; await db.Users.AnyAsync(u => u.Username == name); i++) name = $"{wanted}{i}";
+            user = new AppUser
+            {
+                Username = name, DisplayName = displayName, CreatedAt = DateTime.UtcNow,
+                // First account ever is always admin, like the setup page.
+                IsAdmin = isAdmin || !await db.Users.AnyAsync(),
+                PasswordHash = Hasher.HashPassword(new AppUser(), Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))),
+            };
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+            _count = null;
+            logger.LogInformation("Created account {User} from {Provider} sign-in", name, provider);
+        }
+
+        if (link is null)
+            db.ExternalLogins.Add(new ExternalLogin { Provider = provider, Subject = subject, UserId = user.Id, CreatedAt = DateTime.UtcNow });
+        if (syncAdmin && user.IsAdmin != isAdmin && !(user.IsAdmin && !isAdmin && await db.Users.CountAsync(u => u.IsAdmin) == 1))
+        {
+            user.IsAdmin = isAdmin;
+            user.SecurityStamp = Guid.NewGuid().ToString("N");
+        }
+        user.LastLoginAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        _stamps.TryRemove(user.Id, out _);
+        _info.TryRemove(user.Id, out _);
+        return (user, null);
     }
 
     public static string? ValidateNew(string username, string password)
@@ -166,6 +258,7 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
         user.SecurityStamp = Guid.NewGuid().ToString("N");
         await db.SaveChangesAsync();
         _stamps.TryRemove(userId, out _);
+        _info.TryRemove(userId, out _);
         return null;
     }
 
@@ -184,10 +277,22 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
         var pathIds = await db.Paths.Where(p => p.UserId == userId).Select(p => p.Id).ToListAsync();
         await db.PathItems.Where(i => pathIds.Contains(i.LearningPathId)).ExecuteDeleteAsync();
         await db.Paths.Where(p => p.UserId == userId).ExecuteDeleteAsync();
+        await db.ApiKeys.Where(k => k.UserId == userId).ExecuteDeleteAsync();
+        await db.ExternalLogins.Where(k => k.UserId == userId).ExecuteDeleteAsync();
+        await db.Activity.Where(a => a.UserId == userId).ExecuteDeleteAsync();
         await db.Users.Where(u => u.Id == userId).ExecuteDeleteAsync();
         await tx.CommitAsync();
         _stamps.TryRemove(userId, out _);
+        _info.TryRemove(userId, out _);
         _count = null;
         return null;
     }
+
+    public static ClaimsPrincipal PrincipalFor(UserInfo user, string stamp, string scheme) => new(new ClaimsIdentity(
+    [
+        new Claim(Claims.UserId, user.Id.ToString()),
+        new Claim(ClaimTypes.Name, user.Username),
+        new Claim(Claims.Stamp, stamp),
+        new Claim(Claims.Admin, user.IsAdmin ? "true" : "false"),
+    ], scheme));
 }

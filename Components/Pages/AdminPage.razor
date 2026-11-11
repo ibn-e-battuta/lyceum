@@ -1,0 +1,218 @@
+@page "/admin"
+@attribute [Authorize(Policy = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@implements IDisposable
+@inject CourseLibrary Library
+@inject UserService Users
+@inject PresenceService Presence
+@inject TranscriptService Transcripts
+@inject Transcoder Transcoder
+@inject MediaTools Tools
+@inject AppSettingsService AppSettings
+@inject IDbContextFactory<ProgressDb> DbFactory
+
+<PageTitle>@L["Admin"] · CourseHub</PageTitle>
+
+<TopNav />
+
+<main class="home">
+    <div class="page-head">
+        <h1 class="page-title">@L["Admin dashboard"]</h1>
+        <button class="btn ghost small" @onclick="Load">↻ @L["Refresh"]</button>
+    </div>
+
+    <div class="summary">
+        <div><strong>@users.Count</strong><span>@L["users"]</span></div>
+        <div><strong>@Presence.Active(TimeSpan.FromMinutes(2)).Count</strong><span>@L["watching now"]</span></div>
+        <div><strong>@Library.Courses.Count</strong><span>@L["courses"]</span></div>
+        <div><strong>@Format.Bytes(Library.Courses.Sum(c => c.TotalBytes))</strong><span>@L["of courses on disk"]</span></div>
+        <div><strong>@Format.Long(rows.Sum(r => r.Week))</strong><span>@L["watched this week"]</span></div>
+    </div>
+
+    <div class="admin-grid" style="margin-top:20px">
+        <section class="panel">
+            <h2><span class="live-dot"></span>@L["Watching now"]</h2>
+            @{ var live = Presence.Active(TimeSpan.FromMinutes(2)); }
+            @if (live.Count == 0) { <p class="muted">@L["Nobody is watching right now."]</p> }
+            <ul class="feed">
+                @foreach (var p in live.OrderByDescending(p => p.At))
+                {
+                    <li>
+                        <span class="who">@(users.FirstOrDefault(u => u.Id == p.UserId)?.Name ?? "?")</span>
+                        <a href="@($"course/{p.Course.Id}/{p.Lesson.Id}")">@p.Lesson.Title</a>
+                        <span class="muted tiny">@p.Course.Title</span>
+                    </li>
+                }
+            </ul>
+        </section>
+
+        <section class="panel">
+            <h2>@L["Server"]</h2>
+            <dl class="kv">
+                <dt>@L["Version"]</dt><dd>@Version</dd>
+                <dt>@L["Uptime"]</dt><dd>@Uptime</dd>
+                <dt>.NET</dt><dd>@System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription</dd>
+                <dt>@L["System"]</dt><dd>@System.Runtime.InteropServices.RuntimeInformation.OSDescription (@System.Runtime.InteropServices.RuntimeInformation.OSArchitecture)</dd>
+                <dt>@L["Memory"]</dt><dd>@Format.Bytes(Environment.WorkingSet)</dd>
+                <dt>ffmpeg</dt><dd>@(Tools.Ffmpeg ?? L["not found"])</dd>
+                <dt>whisper.cpp</dt><dd>@(Tools.Whisper ?? L["not found"]) · @Tools.ModelName @(Tools.ModelPresent ? "" : "(" + L["not downloaded"] + ")")</dd>
+                <dt>@L["Video encoder"]</dt><dd>@hw</dd>
+                <dt>@L["Last library scan"]</dt><dd>@Format.Ago(Library.LastScan)</dd>
+            </dl>
+        </section>
+    </div>
+
+    <h2 class="row-title">@L["Users"]</h2>
+    <div class="panel table-wrap">
+        <table class="stats-table">
+            <thead><tr><th>@L["User"]</th><th>@L["Last active"]</th><th>@L["This week"]</th><th>@L["Total watched"]</th><th>@L["Courses finished"]</th><th>@L["Latest course"]</th></tr></thead>
+            <tbody>
+                @foreach (var r in rows.OrderByDescending(r => r.LastActive ?? DateTime.MinValue))
+                {
+                    <tr>
+                        <td>@r.User.Name @(r.User.IsAdmin ? "★" : "")</td>
+                        <td class="muted tiny">@(r.LastActive is { } t ? Format.Ago(t) : L["never"])</td>
+                        <td>@Format.Long(r.Week)</td>
+                        <td>@Format.Long(r.Total)</td>
+                        <td>@r.Finished</td>
+                        <td>@(r.LatestCourse ?? "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <h2 class="row-title">@L["Libraries & storage"]</h2>
+    <div class="admin-grid">
+        <section class="panel table-wrap">
+            <table class="stats-table">
+                <thead><tr><th>@L["Library"]</th><th>@L["Courses"]</th><th>@L["Lessons"]</th><th>@L["Video"]</th><th>@L["Size"]</th></tr></thead>
+                <tbody>
+                    @foreach (var lib in Library.Libraries)
+                    {
+                        var cs = Library.Courses.Where(c => c.LibraryId == lib.Id).ToList();
+                        <tr>
+                            <td>@lib.Name<div class="muted tiny"><code>@lib.Root</code></div></td>
+                            <td>@cs.Count</td>
+                            <td>@cs.Sum(c => c.LessonCount)</td>
+                            <td>@Format.Long(cs.Sum(c => c.TotalSeconds))</td>
+                            <td>@Format.Bytes(cs.Sum(c => c.TotalBytes))</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+        <section class="panel">
+            <h3>@L["CourseHub's own data"] <span class="muted tiny"><code>@Tools.DataDir</code></span></h3>
+            <dl class="kv">
+                @foreach (var (label, size) in storage)
+                {
+                    <dt>@L[label]</dt><dd>@Format.Bytes(size)</dd>
+                }
+            </dl>
+            <a class="tiny accent" href="/settings#playback">@L["Manage in Settings"] →</a>
+        </section>
+    </div>
+
+    <h2 class="row-title">@L["Background jobs"]</h2>
+    <div class="admin-grid">
+        <section class="panel">
+            <h3>@L["Transcription"]</h3>
+            @JobList(Transcripts.Jobs.Select(j => (j.Title, j.State, j.Percent, j.Error)).ToList())
+        </section>
+        <section class="panel">
+            <h3>@L["Video conversion"]</h3>
+            @JobList(Transcoder.Jobs.Select(j => (j.Title + (j.Variant == PlaybackVariant.Remux ? " (remux)" : " (H.264)"), j.State, j.Percent, j.Error)).ToList())
+        </section>
+    </div>
+</main>
+
+@code {
+    private sealed record UserRow(UserInfo User, DateTime? LastActive, double Week, double Total, int Finished, string? LatestCourse);
+
+    private List<UserInfo> users = [];
+    private List<UserRow> rows = [];
+    private List<(string Label, long Size)> storage = [];
+    private string hw = "";
+    private Timer? timer;
+
+    private static string Version => typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "?";
+    private static string Uptime
+    {
+        get
+        {
+            var t = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
+            return t.TotalDays >= 1 ? $"{(int)t.TotalDays}d {t.Hours}h" : t.TotalHours >= 1 ? $"{(int)t.TotalHours}h {t.Minutes}m" : $"{t.Minutes}m";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+        Transcripts.Changed += Refresh;
+        Transcoder.Changed += Refresh;
+        // "Watching now" changes without events from here, so refresh it every 15 s.
+        timer = new Timer(_ => Refresh(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+    }
+
+    private void Refresh() => InvokeAsync(StateHasChanged);
+
+    private async Task Load()
+    {
+        users = await Users.ListAsync();
+        hw = (await AppSettings.GetAsync<ServerSettings>()).HardwareAcceleration;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var weekStart = DateTime.Now.AddDays(-6).ToString("yyyy-MM-dd");
+        var watch = await db.WatchDays.AsNoTracking().ToListAsync();
+        var finished = await db.Activity.AsNoTracking().Where(a => a.Type == ActivityType.CourseCompleted)
+            .GroupBy(a => a.UserId).Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count);
+        var latest = (await db.Progress.AsNoTracking().Select(p => new { p.UserId, p.CoursePath, p.UpdatedAt }).ToListAsync())
+            .GroupBy(p => p.UserId).Select(g => g.MaxBy(p => p.UpdatedAt)!).ToList();
+
+        rows = users.Select(u =>
+        {
+            var w = watch.Where(x => x.UserId == u.Id).ToList();
+            var l = latest.FirstOrDefault(x => x.UserId == u.Id);
+            var active = new[] { l?.UpdatedAt, u.LastLoginAt }.Max();
+            return new UserRow(u, active, w.Where(x => string.CompareOrdinal(x.Day, weekStart) >= 0).Sum(x => x.Seconds), w.Sum(x => x.Seconds),
+                finished.GetValueOrDefault(u.Id), l is null ? null : Library.GetCourseByFolder(l.CoursePath)?.Title ?? l.CoursePath);
+        }).ToList();
+
+        long Size(string dir) => Directory.Exists(dir) ? new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length) : 0;
+        var dbSize = File.Exists(db.Database.GetDbConnection().DataSource) ? new FileInfo(db.Database.GetDbConnection().DataSource).Length : 0;
+        storage =
+        [
+            ("Database", dbSize),
+            ("Converted videos", Size(Tools.TranscodeDir)),
+            ("Transcripts", Size(Tools.TranscriptDir)),
+            ("Thumbnails", Size(Tools.ThumbDir)),
+            ("Speech models", Size(Tools.ModelDir)),
+        ];
+    }
+
+    private RenderFragment JobList(List<(string Title, JobState State, int Percent, string? Error)> jobs) => __builder =>
+    {
+        if (jobs.Count == 0)
+        {
+            <p class="muted">@L["Nothing running."]</p>
+            return;
+        }
+        <div class="muted tiny">@L["{0} running · {1} queued · {2} done · {3} failed", jobs.Count(j => j.State == JobState.Running), jobs.Count(j => j.State == JobState.Queued), jobs.Count(j => j.State == JobState.Done), jobs.Count(j => j.State == JobState.Failed)]</div>
+        <div class="jobs">
+            @foreach (var j in jobs.Take(10))
+            {
+                <div class="job @j.State.ToString().ToLowerInvariant()">
+                    <span class="job-title">@j.Title</span>
+                    <span class="muted tiny">@(j.State switch { JobState.Running => $"{j.Percent}%", JobState.Failed => j.Error, _ => L[j.State.ToString()] })</span>
+                </div>
+            }
+        </div>
+    };
+
+    public void Dispose()
+    {
+        timer?.Dispose();
+        Transcripts.Changed -= Refresh;
+        Transcoder.Changed -= Refresh;
+    }
+}

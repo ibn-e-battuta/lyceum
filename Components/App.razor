@@ -1,11 +1,22 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="@System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <base href="/" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+    <script>
+        // Apply the saved theme before first paint (no flash of the wrong theme).
+        window.coursehubTheme = {
+            get() { try { return localStorage.getItem("coursehub.theme") || "system"; } catch { return "system"; } },
+            set(t) {
+                try { t === "system" ? localStorage.removeItem("coursehub.theme") : localStorage.setItem("coursehub.theme", t); } catch {}
+                if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+            },
+        };
+        coursehubTheme.set(coursehubTheme.get());
+    </script>
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="manifest" href="manifest.webmanifest" />

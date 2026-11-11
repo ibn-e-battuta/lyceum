@@ -21,7 +21,7 @@
 
     @foreach (var p in paths)
     {
-        var courses = p.Items.Select(i => (Item: i, Course: Library.GetCourseByFolder(i.CoursePath))).ToList();
+        var courses = p.Items.Select(i => (Item: i, Course: Visible(Library.GetCourseByFolder(i.CoursePath)))).ToList();
         var next = courses.FirstOrDefault(x => x.Course is not null && !IsComplete(x.Course)).Course;
         <section class="panel path">
             <div class="path-head">
@@ -69,7 +69,7 @@
             <div class="row">
                 <select @bind="adding[p.Id]">
                     <option value="">Add a course…</option>
-                    @foreach (var c in Library.Courses.Where(c => p.Items.All(i => i.CoursePath != c.FolderName)))
+                    @foreach (var c in Library.CoursesFor(Access).Where(c => p.Items.All(i => i.CoursePath != c.FolderName)))
                     {
                         <option value="@c.FolderName">@c.Title</option>
                     }
@@ -98,9 +98,11 @@
     {
         await EnsureUserAsync();
         paths = await UserData.PathsAsync(UserId);
-        stats = await ProgressService.StatsAsync(UserId, Library.Courses);
+        stats = await ProgressService.StatsAsync(UserId, Library.CoursesFor(Access).ToList());
         foreach (var p in paths) adding.TryAdd(p.Id, "");
     }
+
+    private Course? Visible(Course? c) => c is not null && CourseLibrary.CanAccess(c, Access) ? c : null;
 
     private bool IsComplete(Course c) => stats.TryGetValue(c.Id, out var s) && s.Total > 0 && s.Completed == s.Total;
 
@@ -135,7 +137,7 @@
     private async Task Add(LearningPath p)
     {
         var folder = adding.GetValueOrDefault(p.Id);
-        if (Library.GetCourseByFolder(folder ?? "") is { } c) await UserData.AddToPathAsync(UserId, p.Id, c);
+        if (Visible(Library.GetCourseByFolder(folder ?? "")) is { } c) await UserData.AddToPathAsync(UserId, p.Id, c);
         adding[p.Id] = "";
         await Load();
     }

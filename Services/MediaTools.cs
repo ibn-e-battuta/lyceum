@@ -32,6 +32,8 @@ public sealed class MediaTools
         TranscriptDir = Directory.CreateDirectory(Path.Combine(DataDir, "transcripts")).FullName;
         ModelDir = Directory.CreateDirectory(Path.Combine(DataDir, "models")).FullName;
         Ffmpeg = Find(options.FfmpegPath, "ffmpeg");
+        Ffprobe = Ffmpeg is null ? null : Path.Combine(Path.GetDirectoryName(Ffmpeg)!, "ffprobe") is var fp && File.Exists(fp) ? fp : Find(null, "ffprobe");
+        TranscodeDir = Directory.CreateDirectory(Path.Combine(DataDir, "transcodes")).FullName;
         Whisper = Find(options.WhisperPath, "whisper-cli") ?? Find(null, "whisper-cpp");
         logger.LogInformation("ffmpeg: {Ffmpeg}; whisper: {Whisper}", Ffmpeg ?? "not found", Whisper ?? "not found");
     }
@@ -41,11 +43,19 @@ public sealed class MediaTools
     public string TranscriptDir { get; }
     public string ModelDir { get; }
     public string? Ffmpeg { get; }
+    public string? Ffprobe { get; }
+    public string TranscodeDir { get; }
     public string? Whisper { get; }
-    public string ModelPath => Path.Combine(ModelDir, _options.WhisperModel);
-    public string ModelName => _options.WhisperModel;
-    public string ModelUrl => _options.WhisperModelUrl;
-    public string Language => _options.WhisperLanguage;
+    /// <summary>Model chosen in Settings, else the configured default.</summary>
+    public string? ModelOverride { get; set; }
+    public string ModelName => string.IsNullOrWhiteSpace(ModelOverride) ? _options.WhisperModel : ModelOverride;
+    public string ModelPath => Path.Combine(ModelDir, ModelName);
+    public string ModelUrlFor(string model) => _options.WhisperModelUrl.Replace(_options.WhisperModel, model);
+    /// <summary>English-only models (*.en.bin) can't detect other languages or translate.</summary>
+    public bool ModelIsMultilingual => !ModelName.Contains(".en.", StringComparison.OrdinalIgnoreCase);
+    public string ModelUrl => ModelUrlFor(ModelName);
+    public string? LanguageOverride { get; set; }
+    public string Language => string.IsNullOrWhiteSpace(LanguageOverride) ? _options.WhisperLanguage : LanguageOverride;
     public bool ModelPresent => File.Exists(ModelPath);
     public bool CanTranscribe => Ffmpeg is not null && Whisper is not null && ModelPresent;
 

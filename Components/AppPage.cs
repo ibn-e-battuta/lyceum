@@ -8,6 +8,10 @@ namespace CourseHub.Components;
 public abstract class AppPage : ComponentBase
 {
     [CascadingParameter] protected Task<AuthenticationState>? AuthState { get; set; }
+    [Inject] private UserService UserService { get; set; } = default!;
+
+    /// <summary>Libraries this user can see; null means all of them.</summary>
+    protected IReadOnlySet<int>? Access { get; private set; }
 
     protected int UserId { get; private set; }
     protected bool IsAdmin { get; private set; }
@@ -23,5 +27,6 @@ public abstract class AppPage : ComponentBase
         UserId = user.GetUserId() ?? 0;
         IsAdmin = user.IsAdmin();
         UserName = user.Identity?.Name ?? "";
+        Access = await UserService.AllowedLibrariesAsync(UserId);
     }
 }

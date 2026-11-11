@@ -59,7 +59,7 @@
                             <td>@Hours(f.WatchedSeconds)</td>
                             <td>@(f.RemainingSeconds > 0 ? Format.Long(f.RemainingSeconds) : "—")</td>
                             <td>
-                                @if (f.Stats.Completed == f.Stats.Total) { <span class="good">✓ Done</span> }
+                                @if (f.Stats.Completed == f.Stats.Total) { <a class="good" href="@($"/certificate/{f.Course.Id}")">🎓 @L["Certificate"]</a> }
                                 else if (f.EstimatedFinish is { } d) { <span>@d.ToString("d MMM yyyy")</span> <span class="muted tiny">(@((d.DayNumber - Today.DayNumber)) days)</span> }
                                 else { <span class="muted tiny">Watch a bit more to get an estimate</span> }
                             </td>
@@ -82,7 +82,7 @@
     protected override async Task OnInitializedAsync()
     {
         await EnsureUserAsync();
-        s = await Stats.GetAsync(UserId);
+        s = await Stats.GetAsync(UserId, Access);
     }
 
     private static string Hours(double seconds) =>
