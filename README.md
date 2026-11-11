@@ -1,4 +1,4 @@
-# CourseHub
+# Lyceum
 
 A self-hosted, Udemy-style player for video courses you already own. Point it at a folder of courses and you get a course library with progress tracking, notes, transcripts, AI study tools and stats, for everyone in your household. It's in the spirit of Audiobookshelf (for audiobooks) and Komga (for comics).
 
@@ -11,9 +11,9 @@ Built with ASP.NET Core (.NET 10), Blazor Server and SQLite. It ships as one Doc
 - **Player:** resumes where you stopped and autoplays the next lesson. It also has chapter markers, picture-in-picture, a mini player when you scroll, speed in 0.1× steps, a skip-intro setting per course, and keyboard shortcuts. **Listening mode** plays just the audio, like a podcast (it keeps going with the screen off), with a **sleep timer**. **Chromecast** casting works from Chrome and Edge.
 - **Multiple users:** everyone has their own progress, notes, bookmarks, stats, favourites and learning paths. Users can sign in with a password or with **single sign-on** (Authentik, Authelia, Keycloak, Zitadel…).
 - **Notes & bookmarks:** both are tied to a moment in the video, and you can export them as Markdown.
-- **Transcripts:** CourseHub uses `.srt`/`.vtt` files next to your videos, or creates transcripts on your server with Whisper, with optional English captions for other languages. You get captions, a transcript that follows along, and search across everything said in every lesson.
+- **Transcripts:** Lyceum uses `.srt`/`.vtt` files next to your videos, or creates transcripts on your server with Whisper, with optional English captions for other languages. You get captions, a transcript that follows along, and search across everything said in every lesson.
 - **AI study tools** (optional, with a local model such as Ollama): lesson summaries, quizzes, flashcards (with Anki export), "ask this course" with links to the exact moments (it searches by meaning when you set an embedding model), and caption translation into 20 languages.
-- **Spaced repetition:** add flashcards to your review deck and CourseHub brings each one back just before you'd forget it (SM-2, like Anki).
+- **Spaced repetition:** add flashcards to your review deck and Lyceum brings each one back just before you'd forget it (SM-2, like Anki).
 - **Daily goals & reminders:** set minutes per day and get an ntfy push at your chosen time if you haven't reached them.
 - **Attachments & code:** slides, PDFs and zips named after a lesson appear next to it. Code folders can be browsed with syntax highlighting or downloaded as a zip.
 - **Offline:** save lessons or whole courses on a phone or laptop and watch without internet. Progress syncs when you're back online.
@@ -28,21 +28,21 @@ Built with ASP.NET Core (.NET 10), Blazor Server and SQLite. It ships as one Doc
 | Platform | Guide |
 | --- | --- |
 | Docker Compose | [below](#quick-start-docker) |
-| Unraid | [`deploy/unraid/coursehub.xml`](deploy/unraid/coursehub.xml): copy to `/boot/config/plugins/dockerMan/templates-user/`, then *Docker → Add Container → CourseHub* |
+| Unraid | [`deploy/unraid/lyceum.xml`](deploy/unraid/lyceum.xml): copy to `/boot/config/plugins/dockerMan/templates-user/`, then *Docker → Add Container → Lyceum* |
 | TrueNAS SCALE 24.10+ | [`deploy/truenas`](deploy/truenas/README.md) |
 | Synology DSM 7.2+ | [`deploy/synology`](deploy/synology/README.md) |
-| Kubernetes (Helm) | [`deploy/helm/coursehub`](deploy/helm/coursehub/values.yaml): `helm install coursehub ./deploy/helm/coursehub --set courses.nfs.server=…,courses.nfs.path=…` |
+| Kubernetes (Helm) | [`deploy/helm/lyceum`](deploy/helm/lyceum/values.yaml): `helm install lyceum ./deploy/helm/lyceum --set courses.nfs.server=…,courses.nfs.path=…` |
 
-Images are published to `ghcr.io/ibn-e-battuta/coursehub` (`:latest` for releases, `:edge` for the main branch). If you fork the project, your fork publishes to `ghcr.io/<your-account>/coursehub`.
+Images are published to `ghcr.io/ibn-e-battuta/lyceum` (`:latest` for releases, `:edge` for the main branch). If you fork the project, your fork publishes to `ghcr.io/<your-account>/lyceum`.
 
 ## Quick start (Docker)
 
 ```yaml
 # docker-compose.yml
 services:
-  coursehub:
-    image: ghcr.io/ibn-e-battuta/coursehub:latest
-    container_name: coursehub
+  lyceum:
+    image: ghcr.io/ibn-e-battuta/lyceum:latest
+    container_name: lyceum
     user: "1000:1000"                        # your user id/group id (`id -u`, `id -g`)
     ports:
       - "8080:8080"
@@ -58,12 +58,12 @@ services:
 mkdir -p config && docker compose up -d
 ```
 
-Open `http://<server>:8080` and create the admin account. CourseHub scans `/courses` right away.
+Open `http://<server>:8080` and create the admin account. Lyceum scans `/courses` right away.
 
 To build the image yourself instead of pulling it, replace `image:` with `build: .` (whisper.cpp takes a few minutes to compile the first time):
 
 ```bash
-docker build -t coursehub .
+docker build -t lyceum .
 ```
 
 ### Course folder layout
@@ -124,16 +124,16 @@ Everything has a sensible default in the image. Override settings with environme
 | Variable | Default (Docker) | What it does |
 | --- | --- | --- |
 | `TZ` | `Etc/UTC` | Time zone used for daily stats and streaks. |
-| `COURSEHUB_ADMIN_USER` / `COURSEHUB_ADMIN_PASSWORD` | – | Creates the first admin on startup, which skips the setup page. These only apply while no users exist. |
-| `CourseHub__TrustForwardedHeaders` | `false` | Set to `true` behind a reverse proxy, so CourseHub sees real client IPs and https. |
-| `CourseHub__RescanIntervalMinutes` | `30` | Rescans on a timer, in addition to watching for file changes. File watching doesn't work on SMB/NFS shares or Docker Desktop mounts. `0` turns the timer off. |
-| `CourseHub__WatchForChanges` | `true` | Watches library folders and rescans within seconds of a change. |
-| `CourseHub__CoursesRoot` | `/courses` | The folder of the main library. |
-| `CourseHub__BasePath` | – | Serve CourseHub under a path, such as `/courses` for `https://example.com/courses`. See [Reverse proxy](#reverse-proxy). |
-| `CourseHub__Metrics__Enabled` / `CourseHub__Metrics__Token` | `false` / – | Turns on Prometheus metrics at `/metrics`. With a token, scrapers must send `Authorization: Bearer <token>`. |
+| `LYCEUM_ADMIN_USER` / `LYCEUM_ADMIN_PASSWORD` | – | Creates the first admin on startup, which skips the setup page. These only apply while no users exist. |
+| `Lyceum__TrustForwardedHeaders` | `false` | Set to `true` behind a reverse proxy, so Lyceum sees real client IPs and https. |
+| `Lyceum__RescanIntervalMinutes` | `30` | Rescans on a timer, in addition to watching for file changes. File watching doesn't work on SMB/NFS shares or Docker Desktop mounts. `0` turns the timer off. |
+| `Lyceum__WatchForChanges` | `true` | Watches library folders and rescans within seconds of a change. |
+| `Lyceum__CoursesRoot` | `/courses` | The folder of the main library. |
+| `Lyceum__BasePath` | – | Serve Lyceum under a path, such as `/courses` for `https://example.com/courses`. See [Reverse proxy](#reverse-proxy). |
+| `Lyceum__Metrics__Enabled` / `Lyceum__Metrics__Token` | `false` / – | Turns on Prometheus metrics at `/metrics`. With a token, scrapers must send `Authorization: Bearer <token>`. |
 | `Oidc__…` | – | Single sign-on; see [below](#single-sign-on). |
-| `ConnectionStrings__Progress` | `Data Source=/config/coursehub.db` | The SQLite database. |
-| `CourseHub__KeysFolder` | `/config/keys` | Keys that encrypt sign-in cookies. Keep them, or everyone gets signed out. |
+| `ConnectionStrings__Progress` | `Data Source=/config/lyceum.db` | The SQLite database. |
+| `Lyceum__KeysFolder` | `/config/keys` | Keys that encrypt sign-in cookies. Keep them, or everyone gets signed out. |
 | `MediaTools__DataFolder` | `/config/storage` | Thumbnails, converted videos, transcripts and speech models. |
 | `MediaTools__WhisperModelUrl` | Hugging Face URL | Where Settings downloads speech models from. |
 | `ASPNETCORE_HTTP_PORTS` | `8080` | The port inside the container. |
@@ -142,7 +142,7 @@ Everything has a sensible default in the image. Override settings with environme
 
 ```
 config/
-├── coursehub.db            users, progress, notes, stats, paths, settings
+├── lyceum.db            users, progress, notes, stats, paths, settings
 ├── keys/                   sign-in cookie keys
 ├── backups/                scheduled backup zips (Settings → Server backups)
 └── storage/
@@ -153,11 +153,11 @@ config/
     └── probe-cache.json    video codec information
 ```
 
-CourseHub backs up the database, the keys and (optionally) the transcripts every night into `config/backups` (**Settings → Server backups**: time, how many to keep, *Back up now* and downloads). The database copy is made with SQLite's `VACUUM INTO`, so it's consistent while CourseHub runs. To restore, stop CourseHub and unzip a backup into `/config`. For off-site copies, sync `config/backups` elsewhere. Each user can also export their own data from **Settings → Backup**.
+Lyceum backs up the database, the keys and (optionally) the transcripts every night into `config/backups` (**Settings → Server backups**: time, how many to keep, *Back up now* and downloads). The database copy is made with SQLite's `VACUUM INTO`, so it's consistent while Lyceum runs. To restore, stop Lyceum and unzip a backup into `/config`. For off-site copies, sync `config/backups` elsewhere. Each user can also export their own data from **Settings → Backup**.
 
 ## Video compatibility & hardware acceleration
 
-When someone opens a lesson, their browser reports whether it can play the file. If it can't, CourseHub does one of two things:
+When someone opens a lesson, their browser reports whether it can play the file. If it can't, Lyceum does one of two things:
 
 - **Repackage** the video into MP4 when only the container is the problem (MKV, TS, MP4 with AC-3 audio…). This is lossless and takes seconds.
 - **Convert** the video to H.264 for codecs the browser doesn't support (MPEG-4/DivX, WMV, 10-bit H.264, HEVC in some browsers…). This takes about as long as the video on a CPU, and much less with hardware.
@@ -178,11 +178,11 @@ Settings marks encoders the server's ffmpeg doesn't have as unavailable. If hard
 
 ## Raspberry Pi
 
-CourseHub runs on a **Raspberry Pi 4 or 5 with 8 GB** and a **64-bit** OS (Raspberry Pi OS 64-bit, Ubuntu Server, DietPi…); the `arm64` image is pulled automatically. 32-bit Raspberry Pi OS isn't supported (`uname -m` must say `aarch64`).
+Lyceum runs on a **Raspberry Pi 4 or 5 with 8 GB** and a **64-bit** OS (Raspberry Pi OS 64-bit, Ubuntu Server, DietPi…); the `arm64` image is pulled automatically. 32-bit Raspberry Pi OS isn't supported (`uname -m` must say `aarch64`).
 
 - **Pi 4:** choose *Raspberry Pi 4 hardware encoder (V4L2)* in **Settings → Video playback** and pass `/dev/video11` to the container (see the table above). It is much faster than converting on the Pi's CPU.
 - **Pi 5:** it has no H.264 encoder, so conversions use the CPU. Repackaging is still quick, and most courses (MP4/H.264) never need converting at all; for the rest, turn on background conversion so it happens before anyone presses play.
-- **Whisper:** use the `base` or `small` model; CourseHub uses all four cores on a Pi.
+- **Whisper:** use the `base` or `small` model; Lyceum uses all four cores on a Pi.
 - Put `/config` on an SSD rather than the SD card; the database and converted videos write often.
 
 ## Transcripts
@@ -206,19 +206,19 @@ The AI tools use the transcripts, so transcribe a course first. They work with a
 | LM Studio, llama.cpp server, vLLM | their `/v1` address |
 | OpenAI or another cloud API | the provider's URL and an API key; transcripts are then sent to that provider |
 
-Pick a model your server has (for example `llama3.2`, `qwen2.5:7b` or `mistral-nemo`), then use **Test connection**. For **ask this course**, also set an **embedding model** (for example `nomic-embed-text` in Ollama): CourseHub indexes the course's transcripts once and then finds passages by meaning, not just by matching words. Larger models write better quizzes. Summaries, quizzes and flashcards are generated once per lesson and shared by everyone; **Regenerate** replaces them.
+Pick a model your server has (for example `llama3.2`, `qwen2.5:7b` or `mistral-nemo`), then use **Test connection**. For **ask this course**, also set an **embedding model** (for example `nomic-embed-text` in Ollama): Lyceum indexes the course's transcripts once and then finds passages by meaning, not just by matching words. Larger models write better quizzes. Summaries, quizzes and flashcards are generated once per lesson and shared by everyone; **Regenerate** replaces them.
 
 ## Single sign-on
 
-CourseHub supports any OpenID Connect provider. Create a client with redirect URI `https://<your CourseHub>/signin-oidc`, then set:
+Lyceum supports any OpenID Connect provider. Create a client with redirect URI `https://<your Lyceum>/signin-oidc`, then set:
 
 ```yaml
     environment:
-      Oidc__Authority: https://auth.example.com/application/o/coursehub/   # issuer URL
-      Oidc__ClientId: coursehub
+      Oidc__Authority: https://auth.example.com/application/o/lyceum/   # issuer URL
+      Oidc__ClientId: lyceum
       Oidc__ClientSecret: <secret>
       Oidc__DisplayName: Authentik            # button label: "Sign in with Authentik"
-      Oidc__AdminGroup: coursehub-admins      # optional: members become admins
+      Oidc__AdminGroup: lyceum-admins      # optional: members become admins
       # Oidc__DisablePasswordLogin: "true"    # hide the username/password form
       # Oidc__AutoCreateUsers: "false"        # only allow people an admin created first
       # Oidc__MatchExistingByUsername: "true" # link to existing local accounts with the same username
@@ -251,7 +251,7 @@ The endpoints cover libraries, courses, lessons (with subtitle, attachment and c
 
 ## Offline viewing
 
-Use **⬇ Save offline** on a lesson, or **Save whole course offline** at the bottom of the lesson list. Videos are stored in the browser's storage on that device, and **Downloads** lists them and plays them without a connection. Progress you make offline is sent to the server the next time you're online. Offline viewing works best when CourseHub is installed as an app and served over HTTPS.
+Use **⬇ Save offline** on a lesson, or **Save whole course offline** at the bottom of the lesson list. Videos are stored in the browser's storage on that device, and **Downloads** lists them and plays them without a connection. Progress you make offline is sent to the server the next time you're online. Offline viewing works best when Lyceum is installed as an app and served over HTTPS.
 
 ## Languages
 
@@ -259,15 +259,15 @@ The interface follows the browser language, and you can change it under **Settin
 
 ## Reverse proxy
 
-CourseHub's interface uses a live **WebSocket** connection (Blazor Server), so your proxy must forward WebSocket upgrades. Videos use HTTP range requests, which work by default. Also set `CourseHub__TrustForwardedHeaders=true`.
+Lyceum's interface uses a live **WebSocket** connection (Blazor Server), so your proxy must forward WebSocket upgrades. Videos use HTTP range requests, which work by default. Also set `Lyceum__TrustForwardedHeaders=true`.
 
-CourseHub can have its own (sub)domain, such as `courses.example.com`, or live under a path: set `CourseHub__BasePath=/courses` and forward `/courses` to CourseHub **without stripping the prefix** (Caddy: `handle /courses* { reverse_proxy coursehub:8080 }`; Nginx: `location /courses/ { proxy_pass http://coursehub:8080; … }` with no path after the port).
+Lyceum can have its own (sub)domain, such as `courses.example.com`, or live under a path: set `Lyceum__BasePath=/courses` and forward `/courses` to Lyceum **without stripping the prefix** (Caddy: `handle /courses* { reverse_proxy lyceum:8080 }`; Nginx: `location /courses/ { proxy_pass http://lyceum:8080; … }` with no path after the port).
 
 **Caddy**
 
 ```
 courses.example.com {
-    reverse_proxy coursehub:8080
+    reverse_proxy lyceum:8080
 }
 ```
 
@@ -279,7 +279,7 @@ server {
     client_max_body_size 100m;           # for restoring backups
 
     location / {
-        proxy_pass http://coursehub:8080;
+        proxy_pass http://lyceum:8080;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;   # map $http_upgrade $connection_upgrade { default upgrade; '' close; }
@@ -303,10 +303,10 @@ In **Nginx Proxy Manager**, turn on *Websockets Support* for the proxy host.
 - **Two-factor sign-in:** each user can turn it on in **Settings → Two-factor sign-in** with any authenticator app, and gets 8 single-use recovery codes. Admins can reset it for someone who lost their phone.
 - **Kids' profiles:** in **Settings → Users**, mark someone as a kid and set minutes per day. When the time is used up, videos stop until tomorrow. Kids can't create API keys or guest links; pick their libraries as for any user.
 - **Guest links:** on a course's Overview tab, *Share with a guest* creates a link that opens only that course until it expires (1 to 90 days), with no account needed. Revoking it deletes the guest's progress too. Admins see all links in Settings.
-- **Casting** uses links signed for that one lesson and valid for 6 hours, because the Chromecast can't send your sign-in cookie. The TV must reach CourseHub's address: open CourseHub by its LAN address (not `localhost`), or set the public address in Settings.
+- **Casting** uses links signed for that one lesson and valid for 6 hours, because the Chromecast can't send your sign-in cookie. The TV must reach Lyceum's address: open Lyceum by its LAN address (not `localhost`), or set the public address in Settings.
 - API keys are stored as SHA-256 hashes and shown only once.
-- HTML lessons run their own scripts inside CourseHub, as they would in a browser. Only add HTML lessons you trust.
-- If you expose CourseHub to the internet, put it behind HTTPS (the Caddy example handles that).
+- HTML lessons run their own scripts inside Lyceum, as they would in a browser. Only add HTML lessons you trust.
+- If you expose Lyceum to the internet, put it behind HTTPS (the Caddy example handles that).
 
 ## Upgrading
 
@@ -314,7 +314,7 @@ In **Nginx Proxy Manager**, turn on *Websockets Support* for the proxy host.
 docker compose pull && docker compose up -d
 ```
 
-Database changes are applied automatically on startup. Databases from the early single-user builds are backed up next to the original as `coursehub.db.pre-accounts-*.bak`, and their data goes to the first account you create.
+Database changes are applied automatically on startup. Databases from the early single-user builds are backed up next to the original as `lyceum.db.pre-accounts-*.bak`, and their data goes to the first account you create.
 
 ## Running from source
 
@@ -324,7 +324,7 @@ Requirements: .NET 10 SDK. ffmpeg and whisper-cpp are optional; on macOS run `br
 dotnet run          # serves http://localhost:5080 and reads courses from the parent folder
 ```
 
-Local settings are in `appsettings.json`. When CourseHub runs directly on a Mac, admins also get *Open in VS Code / Rider / Finder* buttons for course code. That only works from the Mac itself, and never through a proxy.
+Local settings are in `appsettings.json`. When Lyceum runs directly on a Mac, admins also get *Open in VS Code / Rider / Finder* buttons for course code. That only works from the Mac itself, and never through a proxy.
 
 To change the database schema:
 
@@ -335,7 +335,7 @@ dotnet ef migrations add <Name> -o Data/Migrations
 
 ### Publishing images
 
-`.github/workflows/docker.yml` builds amd64 and arm64 images on native GitHub runners and pushes them to `ghcr.io/<owner>/coursehub`:
+`.github/workflows/docker.yml` builds amd64 and arm64 images on native GitHub runners and pushes them to `ghcr.io/<owner>/lyceum`:
 
 - a push to `main` updates `:edge`;
 - a tag such as `v1.0.0` publishes `:1.0.0`, `:1.0` and `:latest`.
@@ -348,4 +348,4 @@ After the first push, make the package public under GitHub → Packages so other
 
 ## License
 
-CourseHub is free software under the [GNU Affero General Public License v3.0](LICENSE). You may use, modify and self-host it. If you run a modified version as a service for others, you must offer them its source code.
+Lyceum is free software under the [GNU Affero General Public License v3.0](LICENSE). You may use, modify and self-host it. If you run a modified version as a service for others, you must offer them its source code.

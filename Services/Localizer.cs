@@ -2,7 +2,7 @@ using System.Collections.Frozen;
 using System.Globalization;
 using System.Text.Json;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 /// <summary>
 /// UI translations. Keys are the English text, so a missing translation simply shows English.

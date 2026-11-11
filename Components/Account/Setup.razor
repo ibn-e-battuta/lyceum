@@ -8,11 +8,11 @@
 @inject NavigationManager Nav
 @inject OidcOptions Oidc
 
-<PageTitle>Welcome · CourseHub</PageTitle>
+<PageTitle>Welcome · Lyceum</PageTitle>
 
 <main class="auth">
     <div class="auth-card">
-        <div class="auth-brand"><span class="logo">▶</span> CourseHub</div>
+        <div class="auth-brand"><span class="logo" aria-hidden="true"></span> Lyceum</div>
         <h1>@L["Welcome!"]</h1>
         <p class="muted">@L["Create the admin account. You can add more people later in Settings."]</p>
         @if (Oidc.Enabled)

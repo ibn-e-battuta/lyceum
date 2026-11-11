@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 /// <summary>Today's watch time per user, cached so it can be checked on every video request (kids' limits).</summary>
 public sealed class WatchTimeService(IDbContextFactory<ProgressDb> dbFactory)

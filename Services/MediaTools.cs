@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Collections.Concurrent;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed class MediaToolsOptions
 {

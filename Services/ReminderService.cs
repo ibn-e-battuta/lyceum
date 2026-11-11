@@ -2,9 +2,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
-using CourseHub.Data;
+using Lyceum.Data;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 /// <summary>Sends each person their daily nudge (via their own ntfy topic) if they haven't met their goal yet.</summary>
 public sealed class ReminderService(

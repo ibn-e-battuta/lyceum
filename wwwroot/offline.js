@@ -1,10 +1,10 @@
 // Offline downloads: lessons are stored with the Cache API (streamed straight to disk, not memory) and
 // served back by the service worker (sw.js), including byte ranges so seeking works.
-const CACHE = "coursehub-offline-v1";
-// Paths are resolved against the page's base URL, so CourseHub also works under a sub-path (example.com/courses/).
+const CACHE = "lyceum-offline-v1";
+// Paths are resolved against the page's base URL, so Lyceum also works under a sub-path (example.com/courses/).
 const at = (p) => new URL(p, document.baseURI).pathname;
 const INDEX = at("__offline/index.json");
-const QUEUE = "coursehub.offline.progress";
+const QUEUE = "lyceum.offline.progress";
 
 async function cache() { return caches.open(CACHE); }
 
@@ -31,7 +31,7 @@ export async function usage() {
 
 async function download(meta, onProgress) {
   // The header tells the server this is a download, which kids' and guest accounts may not make.
-  const res = await fetch(meta.url, { credentials: "same-origin", headers: { "X-CourseHub-Offline": "1" } });
+  const res = await fetch(meta.url, { credentials: "same-origin", headers: { "X-Lyceum-Offline": "1" } });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   const total = Number(res.headers.get("Content-Length")) || 0;
   const type = res.headers.get("Content-Type") || "video/mp4";

@@ -1,9 +1,9 @@
 image:
-  repository: ghcr.io/ibn-e-battuta/coursehub
+  repository: ghcr.io/ibn-e-battuta/lyceum
   tag: ""            # defaults to the chart's appVersion
   pullPolicy: IfNotPresent
 
-# CourseHub keeps its state in SQLite and holds live UI connections in memory: run exactly one replica.
+# Lyceum keeps its state in SQLite and holds live UI connections in memory: run exactly one replica.
 podSecurityContext:
   runAsUser: 1654
   runAsGroup: 1654
@@ -19,7 +19,7 @@ courses:
   nfs: {}            # { server: 10.0.0.5, path: /export/courses }
   readOnly: true
 
-# CourseHub's own data (database, keys, thumbnails, transcripts, converted videos, models).
+# Lyceum's own data (database, keys, thumbnails, transcripts, converted videos, models).
 persistence:
   existingClaim: ""
   storageClass: ""

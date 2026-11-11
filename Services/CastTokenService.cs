@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 /// <summary>
 /// Signed, short-lived media URLs for devices that can't send the sign-in cookie (Chromecast).
@@ -12,7 +12,7 @@ namespace CourseHub.Services;
 public sealed class CastTokenService(IDataProtectionProvider dataProtection, UserService users)
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromHours(6);
-    private readonly ITimeLimitedDataProtector _protector = dataProtection.CreateProtector("CourseHub.Cast.v1").ToTimeLimitedDataProtector();
+    private readonly ITimeLimitedDataProtector _protector = dataProtection.CreateProtector("CourseHub.Cast.v1").ToTimeLimitedDataProtector();  // Former app name kept on purpose: it is part of the encryption key for data already stored.
 
     /// <summary>The token carries the user's sign-in stamp, so signing out everywhere (or a guest link expiring) also ends casting.</summary>
     public async Task<string?> CreateAsync(int userId, Lesson lesson, Course course) =>

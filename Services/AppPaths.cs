@@ -1,8 +1,8 @@
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 /// <summary>
-/// The URL prefix CourseHub is served under, e.g. "/courses" for https://example.com/courses/.
-/// Empty when it has its own (sub)domain. Set once at startup from CourseHub__BasePath.
+/// The URL prefix Lyceum is served under, e.g. "/courses" for https://example.com/courses/.
+/// Empty when it has its own (sub)domain. Set once at startup from Lyceum__BasePath.
 /// </summary>
 public static class AppPaths
 {

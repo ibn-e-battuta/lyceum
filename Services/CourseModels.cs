@@ -1,4 +1,4 @@
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public enum LessonKind { Video, Article }
 

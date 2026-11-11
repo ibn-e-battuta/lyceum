@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record CodeFile(string RelativePath, long Size, int Depth);
 

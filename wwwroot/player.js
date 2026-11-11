@@ -13,12 +13,12 @@ const store = {
 
 export function getPref(key, fallback) { return store.get(key, fallback); }
 export function setPref(key, value) { store.set(key, value); }
-export function getSavedRate() { return Number(store.get("coursehub.rate", 1)) || 1; }
-export function getAutoplay() { return store.get("coursehub.autoplay", true) !== false; }
-export function setAutoplay(on) { store.set("coursehub.autoplay", !!on); }
+export function getSavedRate() { return Number(store.get("lyceum.rate", 1)) || 1; }
+export function getAutoplay() { return store.get("lyceum.autoplay", true) !== false; }
+export function setAutoplay(on) { store.set("lyceum.autoplay", !!on); }
 
 export function setRate(rate) {
-  store.set("coursehub.rate", rate);
+  store.set("lyceum.rate", rate);
   if (state?.video) state.video.playbackRate = rate;
 }
 
@@ -77,7 +77,7 @@ export function scrollLessonIntoView(id) {
 export async function openWith(app, resourceId, path) {
   try {
     const r = await fetch(`api/open/${app}/${resourceId}?path=${encodeURIComponent(path || "")}`, {
-      method: "POST", headers: { "X-CourseHub": "1" },
+      method: "POST", headers: { "X-Lyceum": "1" },
     });
     if (r.ok) return null;
     const body = await r.json().catch(() => null);
@@ -112,18 +112,18 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
   const handlers = {
     loadedmetadata: () => {
       video.playbackRate = rate || 1;
-      video.volume = Math.min(1, Math.max(0, Number(store.get("coursehub.volume", 1))));
-      video.muted = !!store.get("coursehub.muted", false);
-      setCaptions(video, !!store.get("coursehub.captions", false));
+      video.volume = Math.min(1, Math.max(0, Number(store.get("lyceum.volume", 1))));
+      video.muted = !!store.get("lyceum.muted", false);
+      setCaptions(video, !!store.get("lyceum.captions", false));
       if (resumeAt > 5 && resumeAt < video.duration - 10) video.currentTime = resumeAt;
       else if (s.skipIntro > 0 && video.duration > s.skipIntro + 5) video.currentTime = s.skipIntro;
       video.play().catch(() => { /* autoplay blocked until the user interacts */ });
     },
     ratechange: () => {
-      store.set("coursehub.rate", video.playbackRate);
+      store.set("lyceum.rate", video.playbackRate);
       dotnet.invokeMethodAsync("OnRateChanged", video.playbackRate).catch(() => {});
     },
-    volumechange: () => { store.set("coursehub.volume", video.volume); store.set("coursehub.muted", video.muted); },
+    volumechange: () => { store.set("lyceum.volume", video.volume); store.set("lyceum.muted", video.muted); },
     play: () => { lastTick = performance.now(); },
     timeupdate: () => {
       const now = performance.now();
@@ -137,7 +137,7 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
   };
   for (const [ev, fn] of Object.entries(handlers)) video.addEventListener(ev, fn);
   // Captions loaded after metadata (track element) need the saved preference applied too.
-  video.textTracks.onaddtrack = () => setCaptions(video, !!store.get("coursehub.captions", false));
+  video.textTracks.onaddtrack = () => setCaptions(video, !!store.get("lyceum.captions", false));
 
   const onKey = (e) => {
     const tag = (e.target?.tagName || "").toLowerCase();
@@ -164,8 +164,8 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
       case "p": case "P": if (!isVideo) return; togglePip(); break;
       case "c": case "C": {
         if (video.textTracks.length === 0) { toast("No captions for this lesson"); break; }
-        const on = !store.get("coursehub.captions", false);
-        store.set("coursehub.captions", on);
+        const on = !store.get("lyceum.captions", false);
+        store.set("lyceum.captions", on);
         setCaptions(video, on);
         toast(on ? "Captions on" : "Captions off");
         break;
@@ -211,7 +211,7 @@ function setupMediaSession(media, dotnet, meta) {
   if (!("mediaSession" in navigator) || !meta) return;
   try {
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: meta.title, artist: meta.course, album: "CourseHub",
+      title: meta.title, artist: meta.course, album: "Lyceum",
       artwork: meta.artwork ? [{ src: meta.artwork, sizes: "480x270", type: "image/jpeg" }] : [],
     });
     const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* unsupported action */ } };

@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record Chapter(double Start, double End, string Title);
 

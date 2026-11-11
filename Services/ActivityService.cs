@@ -1,7 +1,7 @@
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record FeedItem(int UserId, string UserName, ActivityType Type, Course Course, Lesson? Lesson, int Count, DateTime At);
 

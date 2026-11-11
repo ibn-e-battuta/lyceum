@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 
-namespace CourseHub.Data;
+namespace Lyceum.Data;
 
 public class AppUser
 {
@@ -51,7 +51,7 @@ public class AppUser
     public DateTime? GuestExpiresAt { get; set; }
 }
 
-/// <summary>A folder of courses. Library #1 is the one from configuration (CourseHub:CoursesRoot).</summary>
+/// <summary>A folder of courses. Library #1 is the one from configuration (Lyceum:CoursesRoot).</summary>
 public class LibraryEntity
 {
     public int Id { get; set; }
@@ -364,7 +364,7 @@ public class ProgressDb(DbContextOptions<ProgressDb> options) : DbContext(option
                 File.Move(file, legacyCopy);
                 foreach (var ext in new[] { "-wal", "-shm" })
                     if (File.Exists(file + ext)) File.Move(file + ext, legacyCopy + ext);
-                logger.LogWarning("Upgrading a database from an older CourseHub. The original is kept at {Backup}", legacyCopy);
+                logger.LogWarning("Upgrading a database from an older Lyceum. The original is kept at {Backup}", legacyCopy);
             }
         }
 

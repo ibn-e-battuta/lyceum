@@ -1,8 +1,8 @@
-using CourseHub.Services;
+using Lyceum.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 
-namespace CourseHub.Components;
+namespace Lyceum.Components;
 
 /// <summary>Base for pages that need the signed-in user. Call <see cref="EnsureUserAsync"/> before using it.</summary>
 public abstract class AppPage : ComponentBase

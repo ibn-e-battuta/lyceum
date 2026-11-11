@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "CourseHub": {
+    "Lyceum": {
       "commandName": "Project",
       "launchBrowser": true,
       "applicationUrl": "http://0.0.0.0:5080",

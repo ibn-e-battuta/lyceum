@@ -10,11 +10,11 @@
 @inject NavigationManager Nav
 @inject OidcOptions Oidc
 
-<PageTitle>@L["Sign in"] · CourseHub</PageTitle>
+<PageTitle>@L["Sign in"] · Lyceum</PageTitle>
 
 <main class="auth">
     <div class="auth-card">
-        <div class="auth-brand"><span class="logo">▶</span> CourseHub</div>
+        <div class="auth-brand"><span class="logo" aria-hidden="true"></span> Lyceum</div>
         @if (pendingToken is not null)
         {
             <h1>@L["Two-factor sign-in"]</h1>
@@ -65,7 +65,7 @@
     private string? pendingToken;
 
     // The password step hands over a short-lived, encrypted "user id + remember me" token to the code step.
-    private ITimeLimitedDataProtector Pending => DataProtection.CreateProtector("CourseHub.Login2fa.v1").ToTimeLimitedDataProtector();
+    private ITimeLimitedDataProtector Pending => DataProtection.CreateProtector("CourseHub.Login2fa.v1").ToTimeLimitedDataProtector();  // Former app name kept on purpose: it is part of the encryption key for data already stored.
 
     protected override async Task OnInitializedAsync()
     {
@@ -139,7 +139,7 @@
         await CompleteAsync(user, remember);
     }
 
-    private async Task CompleteAsync(CourseHub.Data.AppUser user, bool remember)
+    private async Task CompleteAsync(Lyceum.Data.AppUser user, bool remember)
     {
         await HttpContext.SignInAsync(UserService.Principal(user), new AuthenticationProperties
         {

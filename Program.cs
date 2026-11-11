@@ -3,10 +3,10 @@ using System.IO.Compression;
 using System.Net;
 using System.Security.Claims;
 using System.Text;
-using CourseHub.Api;
-using CourseHub.Components;
-using CourseHub.Data;
-using CourseHub.Services;
+using Lyceum.Api;
+using Lyceum.Components;
+using Lyceum.Data;
+using Lyceum.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -19,9 +19,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 var builder = WebApplication.CreateBuilder(args);
-AppPaths.Configure(builder.Configuration["CourseHub:BasePath"]);
+AppPaths.Configure(builder.Configuration["Lyceum:BasePath"]);
 
-var hubOptions = builder.Configuration.GetSection("CourseHub").Get<CourseHubOptions>() ?? new CourseHubOptions();
+var hubOptions = builder.Configuration.GetSection("Lyceum").Get<LyceumOptions>() ?? new LyceumOptions();
 var toolOptions = builder.Configuration.GetSection("MediaTools").Get<MediaToolsOptions>() ?? new MediaToolsOptions();
 var oidc = builder.Configuration.GetSection("Oidc").Get<OidcOptions>() ?? new OidcOptions();
 builder.Services.AddSingleton(hubOptions);
@@ -62,21 +62,31 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<NotificationServic
 builder.Services.AddHttpClient();
 builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
 {
-    doc.Info.Title = "CourseHub API";
+    doc.Info.Title = "Lyceum API";
     doc.Info.Description = "Authenticate with `Authorization: Bearer <API key>` (create keys in Settings → API keys).";
     return Task.CompletedTask;
 }));
 
 // ---------- database ----------
 
-var connectionString = builder.Configuration.GetConnectionString("Progress") ?? "Data Source=coursehub.db";
+var connectionString = builder.Configuration.GetConnectionString("Progress") ?? "Data Source=lyceum.db";
 var dbFile = new SqliteConnectionStringBuilder(connectionString).DataSource;
-if (Path.GetDirectoryName(Path.GetFullPath(dbFile)) is { } dbDir) Directory.CreateDirectory(dbDir);
+if (Path.GetDirectoryName(Path.GetFullPath(dbFile)) is { } dbDir)
+{
+    Directory.CreateDirectory(dbDir);
+    // Lyceum used to be called CourseHub: carry an existing coursehub.db (with its WAL files) over once.
+    var legacyDb = Path.Combine(dbDir, "coursehub.db");
+    if (Path.GetFileName(dbFile) == "lyceum.db" && !File.Exists(dbFile) && File.Exists(legacyDb))
+        foreach (var suffix in new[] { "", "-wal", "-shm" })
+            if (File.Exists(legacyDb + suffix)) File.Move(legacyDb + suffix, Path.GetFullPath(dbFile) + suffix);
+}
 builder.Services.AddDbContextFactory<ProgressDb>(o => o.UseSqlite(connectionString));
 
 // ---------- auth ----------
 
 // Keys encrypt the sign-in cookie. Persisting them means restarts/upgrades don't sign everyone out.
+// "CourseHub" (the app's former name) is deliberately kept here and in every CreateProtector purpose:
+// it is part of the encryption key, so changing it would make stored 2FA secrets unreadable.
 var keysDir = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, hubOptions.KeysFolder));
 builder.Services.AddDataProtection().SetApplicationName("CourseHub").PersistKeysToFileSystem(Directory.CreateDirectory(keysDir));
 
@@ -97,7 +107,7 @@ var auth = builder.Services.AddAuthentication(o =>
     .AddScheme<AuthenticationSchemeOptions, CastTokenAuthHandler>(CastTokenAuthHandler.SchemeName, null)
     .AddCookie(o =>
     {
-        o.Cookie.Name = "coursehub.auth";
+        o.Cookie.Name = "lyceum.auth";
         o.Cookie.HttpOnly = true;
         o.Cookie.SameSite = SameSiteMode.Lax;
         o.LoginPath = "/login";
@@ -123,10 +133,10 @@ var auth = builder.Services.AddAuthentication(o =>
 if (oidc.Enabled)
 {
     // Single sign-on: the provider signs into a short-lived "External" cookie, then /auth/oidc/complete
-    // links it to a CourseHub account and issues the normal cookie.
+    // links it to a Lyceum account and issues the normal cookie.
     auth.AddCookie(ExternalScheme, o =>
     {
-        o.Cookie.Name = "coursehub.external";
+        o.Cookie.Name = "lyceum.external";
         o.ExpireTimeSpan = TimeSpan.FromMinutes(10);
     });
     auth.AddOpenIdConnect(OidcOptions.Scheme, oidc.DisplayName, o =>
@@ -186,7 +196,7 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Pr
     await db.MigrateWithLegacyImportAsync(app.Logger);
 }
 await app.Services.GetRequiredService<UserService>().BootstrapAdminAsync(
-    builder.Configuration["COURSEHUB_ADMIN_USER"], builder.Configuration["COURSEHUB_ADMIN_PASSWORD"]);
+    builder.Configuration["LYCEUM_ADMIN_USER"], builder.Configuration["LYCEUM_ADMIN_PASSWORD"]);
 
 var library = app.Services.GetRequiredService<CourseLibrary>();
 await library.RescanAsync();
@@ -243,9 +253,9 @@ app.MapGet("/guest/{token}", async (string token, HttpContext ctx, GuestService 
     return Results.Redirect(AppPaths.Base + (course is null ? "/" : $"/course/{course.Id}"));
 }).AllowAnonymous();
 
-// Prometheus: off unless CourseHub__Metrics__Enabled=true; if CourseHub__Metrics__Token is set, scrapers must send it as a bearer token.
-var metricsEnabled = builder.Configuration.GetValue<bool>("CourseHub:Metrics:Enabled");
-var metricsToken = builder.Configuration["CourseHub:Metrics:Token"];
+// Prometheus: off unless Lyceum__Metrics__Enabled=true; if Lyceum__Metrics__Token is set, scrapers must send it as a bearer token.
+var metricsEnabled = builder.Configuration.GetValue<bool>("Lyceum:Metrics:Enabled");
+var metricsToken = builder.Configuration["Lyceum:Metrics:Token"];
 if (metricsEnabled)
 {
     app.MapGet("/metrics", async (HttpContext ctx, MetricsService metrics) =>
@@ -326,7 +336,7 @@ app.MapGet("/media/{id}", async (string id, string? v, HttpContext ctx, ClaimsPr
     if (viewer is { IsKid: true } kid && await watch.RemainingAsync(kid) is <= 0)
         return Results.Problem("Time's up for today.", statusCode: StatusCodes.Status403Forbidden);
     // Downloads would play without these checks, so kids' and guest accounts can't make them.
-    if (viewer is { IsKid: true } or { IsGuest: true } && ctx.Request.Headers.ContainsKey("X-CourseHub-Offline"))
+    if (viewer is { IsKid: true } or { IsGuest: true } && ctx.Request.Headers.ContainsKey("X-Lyceum-Offline"))
         return Results.Problem("This account can't save lessons offline.", statusCode: StatusCodes.Status403Forbidden);
     if (v is "remux" or "h264" or "audio")
     {
@@ -405,13 +415,13 @@ app.MapGet("/subs/{id}.vtt", async (string id, string? lang, ClaimsPrincipal use
 // ---------- export (the signed-in user's own data) ----------
 
 app.MapGet("/api/export", async (ClaimsPrincipal user, UserDataService data) =>
-    Results.File(await data.ExportAsync(user.GetUserId()!.Value), "application/json", $"coursehub-backup-{user.Identity?.Name}-{DateTime.Now:yyyy-MM-dd}.json"));
+    Results.File(await data.ExportAsync(user.GetUserId()!.Value), "application/json", $"lyceum-backup-{user.Identity?.Name}-{DateTime.Now:yyyy-MM-dd}.json"));
 
 app.MapGet("/api/notes.md", async (string? course, ClaimsPrincipal user, CourseLibrary lib, UserService users, UserDataService data) =>
 {
     var c = course is null ? null : await AccessibleCourse(user, lib.GetCourse(course), users);
     var md = await data.NotesMarkdownAsync(user.GetUserId()!.Value, c);
-    var name = c is null ? "coursehub-notes" : $"{c.Title} notes";
+    var name = c is null ? "lyceum-notes" : $"{c.Title} notes";
     return Results.File(Encoding.UTF8.GetBytes(md), "text/markdown", $"{name}.md");
 });
 
@@ -451,14 +461,14 @@ app.MapGet("/code/{resourceId}/zip", async (string resourceId, ClaimsPrincipal u
     }
 });
 
-// Opening VS Code/Rider/Finder: admins only, only from the machine running CourseHub, and only from our own
+// Opening VS Code/Rider/Finder: admins only, only from the machine running Lyceum, and only from our own
 // pages (the custom header can't be sent cross-site without a CORS preflight).
 app.MapPost("/api/open/{with}/{resourceId}", async (string with, string resourceId, string? path, HttpContext ctx, CourseLibrary lib, CodeBrowser code) =>
 {
     var remote = ctx.Connection.RemoteIpAddress;
     if (remote is null || !IPAddress.IsLoopback(remote) || hubOptions.TrustForwardedHeaders)
-        return Results.Problem("Only available on the computer running CourseHub.", statusCode: 403);
-    if (!ctx.Request.Headers.ContainsKey("X-CourseHub")) return Results.BadRequest();
+        return Results.Problem("Only available on the computer running Lyceum.", statusCode: 403);
+    if (!ctx.Request.Headers.ContainsKey("X-Lyceum")) return Results.BadRequest();
     if (with is not ("vscode" or "rider" or "finder")) return Results.NotFound();
     if (lib.GetResource(resourceId) is not { } r) return Results.NotFound();
     var target = string.IsNullOrEmpty(path) ? r.Folder.FullPath : CodeBrowser.Resolve(r.Folder, path);
@@ -467,7 +477,7 @@ app.MapPost("/api/open/{with}/{resourceId}", async (string with, string resource
     return error is null ? Results.Ok() : Results.Problem(error, statusCode: 500);
 }).RequireAuthorization("Admin").DisableAntiforgery();
 
-app.MapCourseHubApi();
+app.MapLyceumApi();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 app.Run();
@@ -492,7 +502,7 @@ public sealed class OidcOptions
     public string GroupsClaim { get; set; } = "groups";
     /// <summary>Members of this group become admins (and stop being admins when removed from it).</summary>
     public string? AdminGroup { get; set; }
-    /// <summary>Create a CourseHub account the first time someone signs in.</summary>
+    /// <summary>Create a Lyceum account the first time someone signs in.</summary>
     public bool AutoCreateUsers { get; set; } = true;
     /// <summary>Link to an existing local account with the same username (only enable if your IdP usernames are trusted).</summary>
     public bool MatchExistingByUsername { get; set; }

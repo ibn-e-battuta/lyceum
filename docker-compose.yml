@@ -1,9 +1,9 @@
-# CourseHub — copy this file, change the paths, then: docker compose up -d
+# Lyceum — copy this file, change the paths, then: docker compose up -d
 services:
-  coursehub:
-    image: ghcr.io/ibn-e-battuta/coursehub:latest   # or use `build: .` to build from source
-    container_name: coursehub
-    # Run as your own user so CourseHub can write to ./config. Find your ids with `id -u` / `id -g`.
+  lyceum:
+    image: ghcr.io/ibn-e-battuta/lyceum:latest   # or use `build: .` to build from source
+    container_name: lyceum
+    # Run as your own user so Lyceum can write to ./config. Find your ids with `id -u` / `id -g`.
     user: "1000:1000"
     ports:
       - "8080:8080"
@@ -13,15 +13,15 @@ services:
     environment:
       TZ: Europe/London                     # for daily stats and streaks
       # Create the first admin automatically instead of using the setup page:
-      # COURSEHUB_ADMIN_USER: admin
-      # COURSEHUB_ADMIN_PASSWORD: change-me-please
+      # LYCEUM_ADMIN_USER: admin
+      # LYCEUM_ADMIN_PASSWORD: change-me-please
       # Behind a reverse proxy (Nginx Proxy Manager, Caddy, Traefik, SWAG…):
-      # CourseHub__TrustForwardedHeaders: "true"
+      # Lyceum__TrustForwardedHeaders: "true"
       # Single sign-on (Authentik, Authelia, Keycloak…), see README:
-      # Oidc__Authority: https://auth.example.com/application/o/coursehub/
-      # Oidc__ClientId: coursehub
+      # Oidc__Authority: https://auth.example.com/application/o/lyceum/
+      # Oidc__ClientId: lyceum
       # Oidc__ClientSecret: change-me
-      # Oidc__AdminGroup: coursehub-admins
+      # Oidc__AdminGroup: lyceum-admins
     # Intel/AMD hardware video conversion (choose VAAPI in Settings → Video playback):
     # devices:
     #   - /dev/dri:/dev/dri

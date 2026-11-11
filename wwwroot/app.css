@@ -58,8 +58,8 @@ select, .search {
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
 .logo {
-  width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
-  background: var(--accent); color: white; font-size: 13px;
+  width: 32px; height: 32px; border-radius: 8px; flex: none; display: inline-block;
+  background: url("icon.svg") center / cover no-repeat;
 }
 .search { flex: 1; max-width: 520px; margin-left: auto; padding: 9px 14px; border-radius: 999px; }
 

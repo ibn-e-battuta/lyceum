@@ -1,9 +1,9 @@
 using System.Text;
 using System.Text.Json;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 /// <summary>Notes, bookmarks, per-course preferences, learning paths, and backup/restore.</summary>
 public sealed class UserDataService(IDbContextFactory<ProgressDb> dbFactory, CourseLibrary library)

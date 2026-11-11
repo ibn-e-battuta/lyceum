@@ -28,7 +28,7 @@ else
 <PageTitle>@lesson.Title · @course.Title</PageTitle>
 
 <header class="topbar player-top">
-    <a class="brand" href="./" title="@L["My learning"]"><span class="logo">▶</span></a>
+    <a class="brand" href="./" title="@L["My learning"]"><span class="logo" aria-hidden="true"></span></a>
     <div class="course-title">@course.Title</div>
     <button class="icon-btn @(meta.Favorite ? "on" : "")" title="@(meta.Favorite ? L["Remove from favourites"] : L["Add to favourites"])" @onclick="ToggleFavorite">@(meta.Favorite ? "★" : "☆")</button>
     <div class="top-progress" title="@L["{0} of {1} lessons complete", stats.Completed, stats.Total]">
@@ -503,11 +503,11 @@ else
             selfRef = DotNetObjectReference.Create(this);
             playbackRate = await module.InvokeAsync<double>("getSavedRate");
             autoplay = await module.InvokeAsync<bool>("getAutoplay");
-            var savedTab = await module.InvokeAsync<string?>("getPref", "coursehub.tab", "Overview");
+            var savedTab = await module.InvokeAsync<string?>("getPref", "lyceum.tab", "Overview");
             tab = savedTab is not null && TabNames.Contains(savedTab) ? savedTab : "Overview";
             if (tab == "Study") await LoadStudyAsync();
             if (tab == "Discussion" && IsGuest) tab = "Overview";
-            audioMode = await module.InvokeAsync<bool>("getPref", "coursehub.audio", false);
+            audioMode = await module.InvokeAsync<bool>("getPref", "lyceum.audio", false);
             if (audioMode && lesson?.Kind == LessonKind.Video) Transcoder.Enqueue(lesson, PlaybackVariant.Audio);
             await offline.InvokeVoidAsync("flushProgress");
             try
@@ -595,7 +595,7 @@ else
     {
         tab = t;
         if (t == "Study") await LoadStudyAsync();
-        if (module is not null) await module.InvokeVoidAsync("setPref", "coursehub.tab", t);
+        if (module is not null) await module.InvokeVoidAsync("setPref", "lyceum.tab", t);
     }
 
     private async Task Seek(double seconds)
@@ -1501,7 +1501,7 @@ else
         if (lesson is null || module is null) return;
         if (MediaSrc is not null) resumeOverride = await module.InvokeAsync<double>("getTime");
         audioMode = !audioMode;
-        await module.InvokeVoidAsync("setPref", "coursehub.audio", audioMode);
+        await module.InvokeVoidAsync("setPref", "lyceum.audio", audioMode);
         if (audioMode) Transcoder.Enqueue(lesson, PlaybackVariant.Audio);
     }
 
@@ -1534,7 +1534,7 @@ else
         var origin = publicUrl is not null ? new Uri(publicUrl).GetLeftPart(UriPartial.Authority) : new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
         if (new Uri(origin).IsLoopback)
         {
-            castError = L["Casting needs an address your Chromecast can reach. Open CourseHub by its network address, or set the public address in Settings → Notifications."];
+            castError = L["Casting needs an address your Chromecast can reach. Open Lyceum by its network address, or set the public address in Settings → Notifications."];
             return;
         }
         if (await CastTokens.CreateAsync(UserId, lesson, course) is not { } rawToken) return;

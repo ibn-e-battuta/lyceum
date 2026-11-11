@@ -1,4 +1,4 @@
-namespace CourseHub.Components;
+namespace Lyceum.Components;
 
 public static class Format
 {

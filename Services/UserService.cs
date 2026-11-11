@@ -1,11 +1,11 @@
 using System.Collections.Concurrent;
 using System.Security.Claims;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record UserInfo(int Id, string Username, bool IsAdmin, DateTime CreatedAt, DateTime? LastLoginAt,
     string? DisplayName, string? LibraryAccess, bool ShareActivity)
@@ -42,9 +42,9 @@ public sealed record UserInfo(int Id, string Username, bool IsAdmin, DateTime Cr
 public static class Claims
 {
     public const string UserId = ClaimTypes.NameIdentifier;
-    public const string Stamp = "coursehub:stamp";
-    public const string Admin = "coursehub:admin";
-    public const string Guest = "coursehub:guest";
+    public const string Stamp = "lyceum:stamp";
+    public const string Admin = "lyceum:admin";
+    public const string Guest = "lyceum:guest";
 
     public static int? GetUserId(this ClaimsPrincipal user) =>
         int.TryParse(user.FindFirstValue(UserId), out var id) ? id : null;
@@ -140,7 +140,7 @@ public sealed class UserService(IDbContextFactory<ProgressDb> dbFactory, ILogger
 
         if (user is null)
         {
-            if (!autoCreate) return (null, "Your account isn't set up in CourseHub yet. Ask an admin to create it.");
+            if (!autoCreate) return (null, "Your account isn't set up in Lyceum yet. Ask an admin to create it.");
             var name = wanted;
             for (var i = 2; await db.Users.AnyAsync(u => u.Username == name); i++) name = $"{wanted}{i}";
             user = new AppUser

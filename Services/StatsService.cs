@@ -1,7 +1,7 @@
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record DayTotal(DateOnly Day, double Seconds);
 

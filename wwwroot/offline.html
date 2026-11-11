@@ -3,12 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Downloads · CourseHub</title>
+  <title>Downloads · Lyceum</title>
+  <link rel="icon" href="favicon.ico" sizes="32x32" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="manifest.webmanifest" />
   <meta name="theme-color" content="#0f1115" />
   <script>
-    try { const t = localStorage.getItem("coursehub.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+    try { Object.keys(localStorage).forEach(k => { if (k.startsWith("coursehub.")) { const n = "lyceum." + k.slice(10); if (localStorage.getItem(n) === null) localStorage.setItem(n, localStorage.getItem(k)); localStorage.removeItem(k); } }); } catch {}
+    try { const t = localStorage.getItem("lyceum.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
   </script>
   <link rel="stylesheet" href="app.css" />
   <style>
@@ -27,7 +29,7 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="./"><span class="logo">▶</span> CourseHub</a>
+    <a class="brand" href="./"><span class="logo" aria-hidden="true"></span> Lyceum</a>
     <span class="status" id="net"></span>
     <span class="muted tiny push" id="usage"></span>
   </header>

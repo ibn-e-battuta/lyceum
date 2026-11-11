@@ -2,8 +2,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "coursehub.fullname" . }}
-  labels: {{- include "coursehub.labels" . | nindent 4 }}
+  name: {{ include "lyceum.fullname" . }}
+  labels: {{- include "lyceum.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations: {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -22,6 +22,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "coursehub.fullname" . }}
+                name: {{ include "lyceum.fullname" . }}
                 port: { name: http }
 {{- end }}

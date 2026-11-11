@@ -3,10 +3,10 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record Cue(double Start, double End, string Text);
 
@@ -350,7 +350,7 @@ public sealed partial class TranscriptService(
         if (!tools.CanTranscribe) throw new InvalidOperationException("ffmpeg, whisper-cli and the Whisper model are all required.");
         Update(lesson, JobState.Running, 0, null);
 
-        var work = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "coursehub-" + lesson.Id)).FullName;
+        var work = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "lyceum-" + lesson.Id)).FullName;
         try
         {
             var wav = Path.Combine(work, "audio.wav");

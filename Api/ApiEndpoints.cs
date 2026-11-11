@@ -1,8 +1,8 @@
 using System.Security.Claims;
-using CourseHub.Data;
-using CourseHub.Services;
+using Lyceum.Data;
+using Lyceum.Services;
 
-namespace CourseHub.Api;
+namespace Lyceum.Api;
 
 // ---------- response shapes ----------
 
@@ -29,9 +29,9 @@ public sealed record ActivityDto(string User, string Type, string CourseId, stri
 /// <summary>REST API under /api/v1. Authenticate with the browser session or an API key (Settings → API keys).</summary>
 public static class ApiEndpoints
 {
-    public static void MapCourseHubApi(this WebApplication app)
+    public static void MapLyceumApi(this WebApplication app)
     {
-        var api = app.MapGroup("/api/v1").WithTags("CourseHub").DisableAntiforgery();
+        var api = app.MapGroup("/api/v1").WithTags("Lyceum").DisableAntiforgery();
 
         api.MapGet("/me", async (ClaimsPrincipal p, UserService users) =>
         {

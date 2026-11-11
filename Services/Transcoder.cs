@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Threading.Channels;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public enum PlaybackVariant { Direct, Remux, H264, Audio }
 

@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 #
-# CourseHub — self-hosted video course player.
-#   docker build -t coursehub .
-#   docker run -p 8080:8080 -v /path/to/courses:/courses:ro -v ./config:/config coursehub
+# Lyceum — self-hosted video course player.
+#   docker build -t lyceum .
+#   docker run -p 8080:8080 -v /path/to/courses:/courses:ro -v ./config:/config lyceum
 
 ARG WHISPER_VERSION=v1.9.5
 
@@ -35,16 +35,16 @@ FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 # Restore first for layer caching. Publish restores again once the .razor files are present:
 # the SDK only adds Blazor's framework scripts (_framework/blazor.web.js) when it sees components.
-COPY CourseHub.csproj ./
+COPY Lyceum.csproj ./
 RUN dotnet restore
 COPY . .
-RUN dotnet publish CourseHub.csproj -c Release -o /app /p:UseAppHost=false \
- && test -n "$(grep -l '_framework/blazor.web' /app/CourseHub.staticwebassets.endpoints.json)"
+RUN dotnet publish Lyceum.csproj -c Release -o /app /p:UseAppHost=false \
+ && test -n "$(grep -l '_framework/blazor.web' /app/Lyceum.staticwebassets.endpoints.json)"
 
 # ---------- runtime ----------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 
-LABEL org.opencontainers.image.title="CourseHub" \
+LABEL org.opencontainers.image.title="Lyceum" \
       org.opencontainers.image.description="Self-hosted, Udemy-style player for your own video courses"
 
 ARG TARGETARCH
@@ -64,10 +64,10 @@ COPY --from=build /app .
 ENV PATH="/opt/whisper:${PATH}" \
     LD_LIBRARY_PATH="/opt/whisper" \
     ASPNETCORE_HTTP_PORTS=8080 \
-    CourseHub__CoursesRoot=/courses \
-    CourseHub__KeysFolder=/config/keys \
-    CourseHub__RescanIntervalMinutes=30 \
-    ConnectionStrings__Progress="Data Source=/config/coursehub.db" \
+    Lyceum__CoursesRoot=/courses \
+    Lyceum__KeysFolder=/config/keys \
+    Lyceum__RescanIntervalMinutes=30 \
+    ConnectionStrings__Progress="Data Source=/config/lyceum.db" \
     MediaTools__DataFolder=/config/storage \
     TZ=Etc/UTC
 
@@ -79,4 +79,4 @@ USER app
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -fsS http://localhost:8080/health > /dev/null || exit 1
 
-ENTRYPOINT ["dotnet", "CourseHub.dll"]
+ENTRYPOINT ["dotnet", "Lyceum.dll"]

@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 using Markdig;
 using Microsoft.AspNetCore.Components;
 
-namespace CourseHub.Components;
+namespace Lyceum.Components;
 
 /// <summary>Renders AI output as Markdown. Raw HTML is disabled so model output can't inject markup.</summary>
 public static partial class Md

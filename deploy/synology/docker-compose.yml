@@ -1,17 +1,17 @@
 services:
-  coursehub:
-    image: ghcr.io/ibn-e-battuta/coursehub:latest
-    container_name: coursehub
+  lyceum:
+    image: ghcr.io/ibn-e-battuta/lyceum:latest
+    container_name: lyceum
     user: "1026:100"                    # your DSM user (see README)
     ports:
       - "8080:8080"
     volumes:
       - /volume1/video/courses:/courses:ro
-      - /volume1/docker/coursehub:/config
+      - /volume1/docker/lyceum:/config
     environment:
       TZ: Europe/London
-      CourseHub__RescanIntervalMinutes: "15"
-      # CourseHub__TrustForwardedHeaders: "true"   # when using DSM's reverse proxy
+      Lyceum__RescanIntervalMinutes: "15"
+      # Lyceum__TrustForwardedHeaders: "true"   # when using DSM's reverse proxy
     devices:
       - /dev/dri:/dev/dri               # Intel models only; remove otherwise
     restart: unless-stopped

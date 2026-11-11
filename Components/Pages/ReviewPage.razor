@@ -4,7 +4,7 @@
 @inject CourseLibrary Library
 @inject IJSRuntime JS
 
-<PageTitle>@L["Review"] · CourseHub</PageTitle>
+<PageTitle>@L["Review"] · Lyceum</PageTitle>
 
 <TopNav />
 
@@ -106,9 +106,9 @@
 
 @code {
     private ReviewCounts counts = new(0, 0, 0);
-    private Queue<CourseHub.Data.ReviewCard> queue = new();
-    private CourseHub.Data.ReviewCard? current;
-    private List<CourseHub.Data.ReviewCard> deck = [];
+    private Queue<Lyceum.Data.ReviewCard> queue = new();
+    private Lyceum.Data.ReviewCard? current;
+    private List<Lyceum.Data.ReviewCard> deck = [];
     private bool revealed;
     private string courseFilter = "";
     private string newCourse = "", newFront = "", newBack = "";
@@ -125,7 +125,7 @@
     private async Task Load()
     {
         counts = await Reviews.CountsAsync(UserId, Access);
-        queue = new Queue<CourseHub.Data.ReviewCard>(await Reviews.DueAsync(UserId, Access, courseFilter == "" ? null : courseFilter));
+        queue = new Queue<Lyceum.Data.ReviewCard>(await Reviews.DueAsync(UserId, Access, courseFilter == "" ? null : courseFilter));
         deck = await Reviews.AllAsync(UserId, Access);
         Next();
     }
@@ -172,7 +172,7 @@
         await Load();
     }
 
-    private async Task Delete(CourseHub.Data.ReviewCard c)
+    private async Task Delete(Lyceum.Data.ReviewCard c)
     {
         await Reviews.DeleteAsync(UserId, c.Id);
         await Load();

@@ -1,12 +1,12 @@
 services:
-  coursehub:
-    image: ghcr.io/ibn-e-battuta/coursehub:latest
+  lyceum:
+    image: ghcr.io/ibn-e-battuta/lyceum:latest
     user: "568:568"                     # TrueNAS "apps" user
     ports:
       - "8080:8080"
     volumes:
       - /mnt/tank/media/courses:/courses:ro
-      - /mnt/tank/apps/coursehub:/config
+      - /mnt/tank/apps/lyceum:/config
     environment:
       TZ: Etc/UTC
     devices:

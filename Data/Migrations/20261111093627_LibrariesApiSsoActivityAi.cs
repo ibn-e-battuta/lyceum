@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace CourseHub.Data.Migrations
+namespace Lyceum.Data.Migrations
 {
     /// <inheritdoc />
     public partial class LibrariesApiSsoActivityAi : Migration

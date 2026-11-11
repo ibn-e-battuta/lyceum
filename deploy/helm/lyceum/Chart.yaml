@@ -1,5 +1,5 @@
 apiVersion: v2
-name: coursehub
+name: lyceum
 description: Self-hosted, Udemy-style player for video courses you own
 type: application
 version: 0.3.0

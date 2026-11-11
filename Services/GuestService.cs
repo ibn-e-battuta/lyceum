@@ -1,10 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record GuestLinkInfo(int Id, string Label, string CoursePath, string CreatedBy, int CreatedByUserId, DateTime CreatedAt, DateTime ExpiresAt, DateTime? LastUsedAt, int Visits)
 {

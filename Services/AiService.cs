@@ -4,10 +4,10 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record QuizQuestion(string Question, List<string> Options, int Answer, string? Explanation);
 public sealed record Flashcard(string Front, string Back);

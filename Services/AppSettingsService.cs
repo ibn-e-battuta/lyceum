@@ -1,14 +1,14 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 /// <summary>Server-wide options admins change in Settings.</summary>
 public sealed record ServerSettings
 {
-    /// <summary>Address people use to reach CourseHub, e.g. https://courses.example.com. Used in notification links.</summary>
+    /// <summary>Address people use to reach Lyceum, e.g. https://courses.example.com. Used in notification links.</summary>
     public string? PublicUrl { get; init; }
     public bool AutoTranscribeNewVideos { get; init; }
     /// <summary>Convert videos the browser can't play in the background as soon as they're found.</summary>

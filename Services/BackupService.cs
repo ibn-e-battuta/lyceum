@@ -1,9 +1,9 @@
 using System.IO.Compression;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record BackupSettings
 {
@@ -19,14 +19,14 @@ public sealed record BackupFile(string Name, long Size, DateTime CreatedAt);
 
 /// <summary>
 /// Daily zip of everything that can't be recreated: the database (a consistent copy via VACUUM INTO,
-/// safe while CourseHub runs), the sign-in keys and, optionally, generated transcripts and translations.
+/// safe while Lyceum runs), the sign-in keys and, optionally, generated transcripts and translations.
 /// Thumbnails, converted videos and speech models are left out; they're rebuilt or re-downloaded on demand.
 /// </summary>
 public sealed class BackupService(
     IDbContextFactory<ProgressDb> dbFactory,
     AppSettingsService settings,
     MediaTools tools,
-    CourseHubOptions options,
+    LyceumOptions options,
     IWebHostEnvironment env,
     ILogger<BackupService> logger) : BackgroundService
 {
@@ -64,13 +64,17 @@ public sealed class BackupService(
 
     public List<BackupFile> List() =>
         Directory.Exists(Folder)
-            ? new DirectoryInfo(Folder).GetFiles("coursehub-backup-*.zip").OrderByDescending(f => f.CreationTimeUtc)
+            ? new DirectoryInfo(Folder).GetFiles("*-backup-*.zip").Where(f => IsBackupName(f.Name)).OrderByDescending(f => f.CreationTimeUtc)
                 .Select(f => new BackupFile(f.Name, f.Length, f.CreationTimeUtc)).ToList()
             : [];
 
+    // "coursehub-backup-…" files were made before the rename to Lyceum and are still valid backups.
+    private static bool IsBackupName(string name) =>
+        (name.StartsWith("lyceum-backup-") || name.StartsWith("coursehub-backup-")) && name.EndsWith(".zip");
+
     public string? PathOf(string name)
     {
-        if (name.Contains('/') || name.Contains('\\') || !name.StartsWith("coursehub-backup-") || !name.EndsWith(".zip")) return null;
+        if (name.Contains('/') || name.Contains('\\') || !IsBackupName(name)) return null;
         var p = Path.Combine(Folder, name);
         return File.Exists(p) ? p : null;
     }
@@ -85,9 +89,9 @@ public sealed class BackupService(
     {
         if (!await _gate.WaitAsync(0)) return null;
         var s = await settings.GetAsync<BackupSettings>();
-        var name = $"coursehub-backup-{DateTime.Now:yyyyMMdd-HHmmss}.zip";
+        var name = $"lyceum-backup-{DateTime.Now:yyyyMMdd-HHmmss}.zip";
         var target = Path.Combine(Folder, name);
-        var dbCopy = Path.Combine(Path.GetTempPath(), $"coursehub-{Guid.NewGuid():N}.db");
+        var dbCopy = Path.Combine(Path.GetTempPath(), $"lyceum-{Guid.NewGuid():N}.db");
         try
         {
             await using (var db = await dbFactory.CreateDbContextAsync())
@@ -96,12 +100,12 @@ public sealed class BackupService(
             await using (var zipStream = File.Create(target + ".part"))
             using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create))
             {
-                zip.CreateEntryFromFile(dbCopy, "coursehub.db", CompressionLevel.Optimal);
+                zip.CreateEntryFromFile(dbCopy, "lyceum.db", CompressionLevel.Optimal);
                 var keys = Path.GetFullPath(Path.Combine(env.ContentRootPath, options.KeysFolder));
                 AddFolder(zip, keys, "keys");
                 if (s.IncludeTranscripts) AddFolder(zip, tools.TranscriptDir, "storage/transcripts");
                 zip.CreateEntry("README.txt").Open().Write(System.Text.Encoding.UTF8.GetBytes(
-                    "CourseHub backup.\nTo restore: stop CourseHub, put coursehub.db and keys/ (and storage/transcripts/) into your /config folder, start it again.\n"));
+                    "Lyceum backup.\nTo restore: stop Lyceum, put lyceum.db and keys/ (and storage/transcripts/) into your /config folder, start it again.\n"));
             }
             File.Move(target + ".part", target, overwrite: true);
 

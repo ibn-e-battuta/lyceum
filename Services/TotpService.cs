@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.DataProtection;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 /// <summary>
 /// Time-based one-time passwords (RFC 6238: 30-second steps, 6 digits, HMAC-SHA1), as used by
@@ -12,14 +12,14 @@ public sealed class TotpService(IDataProtectionProvider dataProtection)
 {
     private const int StepSeconds = 30;
     private const int Digits = 6;
-    private readonly IDataProtector _protector = dataProtection.CreateProtector("CourseHub.Totp.v1");
+    private readonly IDataProtector _protector = dataProtection.CreateProtector("CourseHub.Totp.v1");  // Former app name kept on purpose: it is part of the encryption key for data already stored.
 
     public string NewSecret() => Base32Encode(RandomNumberGenerator.GetBytes(20));
 
     public string Protect(string secret) => _protector.Protect(secret);
     public string Unprotect(string stored) => _protector.Unprotect(stored);
 
-    public static string ProvisioningUri(string secret, string account, string issuer = "CourseHub") =>
+    public static string ProvisioningUri(string secret, string account, string issuer = "Lyceum") =>
         $"otpauth://totp/{Uri.EscapeDataString(issuer)}:{Uri.EscapeDataString(account)}?secret={secret}&issuer={Uri.EscapeDataString(issuer)}&digits={Digits}&period={StepSeconds}";
 
     /// <summary>Shows the secret in groups of four, easier to type into an app by hand.</summary>

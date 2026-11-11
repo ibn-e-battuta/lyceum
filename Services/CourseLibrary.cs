@@ -2,12 +2,12 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
-public sealed class CourseHubOptions
+public sealed class LyceumOptions
 {
     public string CoursesRoot { get; set; } = "..";
     public string[] IgnoreFolders { get; set; } = [];
@@ -32,7 +32,7 @@ public sealed record LibraryDiff(IReadOnlyList<Course> AddedCourses, IReadOnlyLi
 /// Files named after a lesson (slides, PDFs, zips) become that lesson's attachments.
 /// </summary>
 public sealed partial class CourseLibrary(
-    CourseHubOptions options,
+    LyceumOptions options,
     IWebHostEnvironment env,
     IDbContextFactory<ProgressDb> dbFactory,
     MediaProbe probe,
@@ -150,7 +150,7 @@ public sealed partial class CourseLibrary(
         return null;
     }
 
-    /// <summary>Removes a library from CourseHub. Files on disk and users' progress are kept.</summary>
+    /// <summary>Removes a library from Lyceum. Files on disk and users' progress are kept.</summary>
     public async Task<string?> RemoveLibraryAsync(int id)
     {
         if (id == 1) return "The main library comes from the server configuration and can't be removed.";
@@ -178,7 +178,7 @@ public sealed partial class CourseLibrary(
             await db.SaveChangesAsync();
             rows.Insert(0, main);
         }
-        // Library #1 always follows the configured folder, so changing CourseHub__CoursesRoot just works.
+        // Library #1 always follows the configured folder, so changing Lyceum__CoursesRoot just works.
         return rows.Select(r => new LibraryInfo(r.Id, r.Name, r.Id == 1 ? RootPath : r.Path)).ToList();
     }
 

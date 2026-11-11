@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public enum HealthIssueKind { Broken, Empty, NeedsConversion, Duplicate, MissingTranscript, NoCover }
 

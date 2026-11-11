@@ -3,7 +3,7 @@
 @implements IDisposable
 
 <header class="topbar">
-    <a class="brand" href="./"><span class="logo">▶</span><span class="hide-mobile">CourseHub</span></a>
+    <a class="brand" href="./"><span class="logo" aria-hidden="true"></span><span class="hide-mobile">Lyceum</span></a>
     <AuthorizeView>
         @if (context.User.IsGuest())
         {
@@ -59,7 +59,7 @@
         if (!firstRender) return;
         try
         {
-            theme = await JS.InvokeAsync<string>("coursehubTheme.get");
+            theme = await JS.InvokeAsync<string>("lyceumTheme.get");
             StateHasChanged();
         }
         catch (JSException) { }
@@ -68,7 +68,7 @@
     private async Task CycleTheme()
     {
         theme = theme switch { "system" => "light", "light" => "dark", _ => "system" };
-        await JS.InvokeVoidAsync("coursehubTheme.set", theme);
+        await JS.InvokeVoidAsync("lyceumTheme.set", theme);
     }
 
     private void OnLocationChanged(object? s, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) => InvokeAsync(StateHasChanged);

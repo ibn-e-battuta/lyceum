@@ -1,8 +1,8 @@
 using System.Net.Http.Headers;
 using System.Text;
-using CourseHub.Data;
+using Lyceum.Data;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record Notification(string Event, string Title, string Message, string? Path, object? Data);
 

@@ -22,7 +22,7 @@
 @inject ReminderService Reminders
 @inject IConfiguration Config
 
-<PageTitle>@L["Settings"] · CourseHub</PageTitle>
+<PageTitle>@L["Settings"] · Lyceum</PageTitle>
 
 <TopNav />
 
@@ -107,7 +107,7 @@
         }
         else
         {
-            <p class="muted tiny">@L["Protect your account with a code from your phone in addition to your password. Recommended if CourseHub is reachable from the internet. (Single sign-on accounts use your identity provider's two-factor instead.)"]</p>
+            <p class="muted tiny">@L["Protect your account with a code from your phone in addition to your password. Recommended if Lyceum is reachable from the internet. (Single sign-on accounts use your identity provider's two-factor instead.)"]</p>
             <button class="btn ghost small" @onclick="BeginTotp">@L["Set up two-factor sign-in"]</button>
         }
         @if (securityMessage is not null) { <p class="tiny @(securityFailed ? "error" : "good")">@securityMessage</p> }
@@ -115,7 +115,7 @@
 
     <section class="panel" id="goals">
         <h2>🎯 @L["Daily goal & reminders"]</h2>
-        <p class="muted tiny">@L["Set how many minutes you want to learn each day. At the time you choose, CourseHub sends a push notification to your ntfy topic if you haven't reached it yet (and when flashcards are due)."]</p>
+        <p class="muted tiny">@L["Set how many minutes you want to learn each day. At the time you choose, Lyceum sends a push notification to your ntfy topic if you haven't reached it yet (and when flashcards are due)."]</p>
         <div class="row form-row">
             <label class="field"><span>@L["Minutes per day"]</span><input type="number" min="0" max="600" @bind="goalMinutes" /></label>
             <label class="field"><span>@L["Remind me at"]</span><input type="time" @bind="reminderTime" /></label>
@@ -387,7 +387,7 @@
         <section class="panel" id="notifications">
             <h2>@L["Notifications"]</h2>
             <p class="muted tiny">@L["Send events to ntfy (phone push notifications) or any webhook (Home Assistant, Discord via a bridge, n8n…)."]</p>
-            <label class="field"><span>@L["Public address of CourseHub (for links in notifications)"]</span>
+            <label class="field"><span>@L["Public address of Lyceum (for links in notifications)"]</span>
                 <input @bind="server.PublicUrl" placeholder="https://courses.example.com" @bind:after="SaveServer" />
             </label>
             @foreach (var t in notify.Targets)
@@ -423,7 +423,7 @@
         <h2>@L["Watch on your phone or tablet"]</h2>
         @if (shareUrls.Count == 0)
         {
-            <p class="muted">@L["Open CourseHub on your other devices using this server's address."]</p>
+            <p class="muted">@L["Open Lyceum on your other devices using this server's address."]</p>
         }
         else
         {
@@ -457,7 +457,7 @@
 
         <section class="panel" id="server-backups">
             <h2>🗄 @L["Server backups"]</h2>
-            <p class="muted tiny">@L["A daily zip of the database, sign-in keys and transcripts, kept in {0}. To restore, stop CourseHub and unzip it into /config.", Backups.Folder]</p>
+            <p class="muted tiny">@L["A daily zip of the database, sign-in keys and transcripts, kept in {0}. To restore, stop Lyceum and unzip it into /config.", Backups.Folder]</p>
             <div class="row form-row">
                 <label class="toggle"><input type="checkbox" @bind="backupOn" /> @L["Back up every day"]</label>
                 <label class="field"><span>@L["At (hour)"]</span><input type="number" min="0" max="23" @bind="backupHour" /></label>
@@ -479,13 +479,13 @@
                 </div>
             }
             <h3>@L["Monitoring"]</h3>
-            @if (Config.GetValue<bool>("CourseHub:Metrics:Enabled"))
+            @if (Config.GetValue<bool>("Lyceum:Metrics:Enabled"))
             {
-                <p class="tiny">✓ @L["Prometheus metrics are available at"] <code>@($"{Nav.BaseUri}metrics")</code>@(string.IsNullOrEmpty(Config["CourseHub:Metrics:Token"]) ? "" : " " + L["(bearer token required)"])</p>
+                <p class="tiny">✓ @L["Prometheus metrics are available at"] <code>@($"{Nav.BaseUri}metrics")</code>@(string.IsNullOrEmpty(Config["Lyceum:Metrics:Token"]) ? "" : " " + L["(bearer token required)"])</p>
             }
             else
             {
-                <p class="muted tiny">@L["Set CourseHub__Metrics__Enabled=true (and optionally CourseHub__Metrics__Token) to expose Prometheus metrics at /metrics."]</p>
+                <p class="muted tiny">@L["Set Lyceum__Metrics__Enabled=true (and optionally Lyceum__Metrics__Token) to expose Prometheus metrics at /metrics."]</p>
             }
         </section>
     }
@@ -842,7 +842,7 @@
         if (goalFailed || Me?.ReminderUrl is null) return;
         var (title, msg, link) = await Reminders.ComposeAsync(Me, force: true);
         var token = (await Users.FindForSignInAsync(UserId))?.ReminderToken;
-        var err = await Reminders.SendAsync(Me.ReminderUrl, token, title ?? "CourseHub", msg ?? "Reminders work. 🎉", link, allowPrivate: IsAdmin);
+        var err = await Reminders.SendAsync(Me.ReminderUrl, token, title ?? "Lyceum", msg ?? "Reminders work. 🎉", link, allowPrivate: IsAdmin);
         goalFailed = err is not null;
         goalMessage = err is null ? L["Sent. Check your device."] : L["Failed: {0}", err];
     }
@@ -1101,7 +1101,7 @@
     private async Task TestTarget(NotificationTarget t)
     {
         if (!IsAdmin) return;
-        var err = await Notifications.SendToAsync(t, new Notification("test", "CourseHub test", "Notifications from CourseHub work. 🎉", "/", null));
+        var err = await Notifications.SendToAsync(t, new Notification("test", "Lyceum test", "Notifications from Lyceum work. 🎉", "/", null));
         notifyFailed = err is not null;
         notifyMessage = err is null ? L["Sent. Check your device."] : L["Failed: {0}", err];
     }

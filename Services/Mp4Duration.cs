@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 /// <summary>
 /// Reads the duration of an MP4/MOV file from its 'moov/mvhd' box without decoding anything.

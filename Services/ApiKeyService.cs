@@ -2,12 +2,12 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record ApiKeyInfo(int Id, string Name, string Prefix, DateTime CreatedAt, DateTime? LastUsedAt);
 

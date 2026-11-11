@@ -1,7 +1,7 @@
-using CourseHub.Data;
+using Lyceum.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace CourseHub.Services;
+namespace Lyceum.Services;
 
 public sealed record CommentView(int Id, int UserId, string Author, string Text, double? Seconds, DateTime CreatedAt);
 public sealed record SharedNoteView(int Id, int UserId, string Author, string LessonPath, NoteKind Kind, double Seconds, string Text, DateTime UpdatedAt);
