@@ -368,7 +368,7 @@ public sealed partial class CourseLibrary(
         var (rootLessons, rootFiles) = LessonsIn(lib, courseDir);
         var subSections = new List<Section>();
         foreach (var sub in SubDirs(courseDir))
-            CollectSections(lib, sub, Path.GetFileName(sub), subSections, resources);
+            CollectSections(lib, sub, [CleanTitle(Path.GetFileName(sub), isFile: false)], subSections, resources);
 
         if (rootLessons.Count > 0)
         {
@@ -419,8 +419,10 @@ public sealed partial class CourseLibrary(
     }
 
     /// <returns>true when the folder (or a child) contains lessons.</returns>
-    private bool CollectSections(LibraryInfo lib, string dir, string title, List<Section> into, List<ResourceFolder> resources)
+    /// <param name="path">Cleaned folder names from the course folder down to <paramref name="dir"/>, e.g. ["Part One", "Basics"].</param>
+    private bool CollectSections(LibraryInfo lib, string dir, List<string> path, List<Section> into, List<ResourceFolder> resources)
     {
+        var title = string.Join(" / ", path);
         if (IsCodeProject(dir))
         {
             AddResource(lib, dir, title, resources);
@@ -428,10 +430,11 @@ public sealed partial class CourseLibrary(
         }
         var (lessons, files) = LessonsIn(lib, dir);
         var any = lessons.Count > 0;
-        if (any) into.Add(new Section(CleanTitle(title, isFile: false), lessons) { Files = files });
+        // Nested folders keep their parent path as a group, so the sidebar can show Part → Chapter.
+        if (any) into.Add(new Section(path[^1], lessons) { Files = files, Group = path.Count > 1 ? string.Join(" / ", path[..^1]) : null });
         var childResources = new List<ResourceFolder>();
         foreach (var sub in SubDirs(dir))
-            any |= CollectSections(lib, sub, $"{title} / {Path.GetFileName(sub)}", into, childResources);
+            any |= CollectSections(lib, sub, [.. path, CleanTitle(Path.GetFileName(sub), isFile: false)], into, childResources);
 
         // A folder without any lessons is course material (code, slides...): show it as one resource.
         if (!any && Directory.EnumerateFileSystemEntries(dir).Any(e => !Path.GetFileName(e).StartsWith('.')))

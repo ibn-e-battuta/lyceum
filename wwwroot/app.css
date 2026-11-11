@@ -168,6 +168,16 @@ select, .search {
 .curriculum-head h2 { font-size: 16px; }
 
 .section { border-bottom: 1px solid var(--line); }
+.group-head {
+  width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 18px;
+  background: var(--panel); border: 0; border-bottom: 1px solid var(--line); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.group-head:hover { background: var(--hover-soft); }
+.group-title { font-weight: 700; }
+.group-head:not(.open) .chev { transform: rotate(-90deg); }
+.section.nested .section-head { padding-left: 32px; }
+.section.nested .section-title { font-weight: 500; }
+.section.nested li { padding-left: 32px; }
 .section-head {
   width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px;
   padding: 14px 18px; background: var(--panel-2); border: 0; color: var(--text); font: inherit; text-align: left; cursor: pointer;

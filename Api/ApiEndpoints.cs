@@ -12,7 +12,7 @@ public sealed record CourseSummaryDto(string Id, string Title, string? Author, i
     int Completed, double Percent, DateTime? LastWatched, string? ResumeLessonId, string CoverUrl);
 public sealed record LessonDto(string Id, string Title, string Kind, int? DurationSeconds, string MediaUrl, string? ThumbUrl,
     double Position, bool Completed);
-public sealed record SectionDto(string Title, IReadOnlyList<LessonDto> Lessons);
+public sealed record SectionDto(string Title, string? Group, IReadOnlyList<LessonDto> Lessons);
 public sealed record CourseDto(string Id, string Title, string? Author, string? Description, int LibraryId, string CoverUrl,
     IReadOnlyList<SectionDto> Sections, double Percent);
 public sealed record TrackDto(string Language, string Label, string Url);
@@ -71,7 +71,7 @@ public static class ApiEndpoints
             var prog = await progress.ForCourseAsync(userId, course);
             var stats = ProgressService.Stats(course, prog);
             return Results.Ok(new CourseDto(course.Id, course.Title, course.Author, course.Description, course.LibraryId, course.CoverUrl,
-                course.Sections.Select(s => new SectionDto(s.Title, s.Lessons.Select(l => Lesson(l, prog)).ToList())).ToList(), stats.Percent));
+                course.Sections.Select(s => new SectionDto(s.Title, s.Group, s.Lessons.Select(l => Lesson(l, prog)).ToList())).ToList(), stats.Percent));
         });
 
         api.MapGet("/lessons/{id}", async (string id, ClaimsPrincipal p, UserService users, CourseLibrary lib, ProgressService progress,

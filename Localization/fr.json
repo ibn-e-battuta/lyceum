@@ -375,6 +375,7 @@
  "{0} lessons have searchable transcripts.": "{0} leçons ont des transcriptions consultables.",
  "{0} of {1} correct": "{0} sur {1} correctes",
  "{0} of {1} lessons complete": "{0} leçons sur {1} terminées",
+ "{0} parts": "{0} parties",
  "{0} running · {1} queued · {2} done · {3} failed": "{0} en cours · {1} en attente · {2} terminées · {3} en échec",
  "{0} sources": "{0} sources",
  "{0} thumbnails · {1} generated transcripts": "{0} miniatures · {1} transcriptions générées"

@@ -39,6 +39,9 @@ public sealed record Section(string Title, IReadOnlyList<Lesson> Lessons)
     public double TotalSeconds => Lessons.Sum(l => l.DurationSeconds ?? 0);
     /// <summary>Files in the section folder that don't belong to a specific lesson.</summary>
     public IReadOnlyList<Attachment> Files { get; init; } = [];
+    /// <summary>Parent folders of a nested section ("Part One" for Part One/Basics); null at the top level.</summary>
+    public string? Group { get; init; }
+    public string FullTitle => Group is null ? Title : $"{Group} / {Title}";
 }
 
 /// <summary>A folder of code or other material that ships with a course.</summary>
