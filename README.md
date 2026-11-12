@@ -175,9 +175,9 @@ The two apps never talk to each other. They share your courses folder:
   - each document's Markdown chapters are reading lessons, with their images, tracked like any other lesson;
   - the whole-document PDF, `README.md`, `CHANGES.md` and attachments are the section's downloads.
 - **New and updated documents show up by themselves.** Lyceum watches the folder, or rescans every 30 minutes where watching isn't available.
-- **Lectern keeps everything else in its own data folder.** Its links, history and docs website stay out of the courses folder, so Lyceum only ever sees course content.
+- **Lectern keeps everything else in its own config folder.** Its document list, settings and history stay out of the courses folder, so Lyceum only ever sees course content.
 
-Each app runs fine on its own: Lyceum without Lectern simply has no synced documents, and Lectern without Lyceum is a standalone document mirror with its own web UI. Either can be stopped or upgraded without touching the other.
+Each app runs fine on its own: Lyceum without Lectern simply has no synced documents, and Lectern without Lyceum is a standalone document mirror with its own reader, search and sign-in. Either can be stopped or upgraded without touching the other.
 
 ### Running both
 
@@ -202,20 +202,20 @@ services:
     image: ghcr.io/ibn-e-battuta/lectern:latest
     user: "1000:1000"
     ports:
-      - "127.0.0.1:8790:8790"                           # web UI, this machine only
+      - "8790:8080"
     volumes:
       - /path/to/your/courses:/courses                  # Lectern writes the documents
-      - ./lectern-data:/data                            # links, settings, history
+      - ./lectern-config:/config                        # documents list, settings, history
     environment:
       TZ: Europe/London
     restart: unless-stopped
 ```
 
 ```bash
-mkdir -p config lectern-data && docker compose up -d
+mkdir -p config lectern-config && docker compose up -d
 ```
 
-Then add documents at **http://localhost:8790**, and watch the course in Lyceum at `http://<server>:8080`.
+Then create Lectern's admin account and add documents at `http://<server>:8790`, and watch the course in Lyceum at `http://<server>:8080`.
 
 | Task | Command |
 |---|---|
@@ -223,7 +223,7 @@ Then add documents at **http://localhost:8790**, and watch the course in Lyceum 
 | Stop one, keep the other running | `docker compose stop lectern` |
 | Update both | `docker compose pull && docker compose up -d` |
 
-See Lectern's README for its settings, schedule and command line.
+See Lectern's README for its settings and schedule.
 
 ## Video compatibility & hardware acceleration
 
