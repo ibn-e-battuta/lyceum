@@ -276,7 +276,9 @@ The AI tools use the transcripts, so transcribe a course first. They work with a
 | LM Studio, llama.cpp server, vLLM | their `/v1` address |
 | OpenAI or another cloud API | the provider's URL and an API key; transcripts are then sent to that provider |
 
-Pick a model your server has (for example `llama3.2`, `qwen2.5:7b` or `mistral-nemo`), then use **Test connection**. For **ask this course**, also set an **embedding model** (for example `nomic-embed-text` in Ollama): Lyceum indexes the course's transcripts once and then finds passages by meaning, not just by matching words. Larger models write better quizzes. Summaries, quizzes and flashcards are generated once per lesson and shared by everyone; **Regenerate** replaces them.
+Pick a model your server has (for example `llama3.2`, `qwen2.5:7b` or `mistral-nemo`), then use **Test connection**.
+
+Everything here can run free on your own hardware. On a **Mac**, install Ollama natively (`brew install ollama && brew services start ollama`) rather than in Docker: containers on a Mac can't use the GPU, so the native app is many times faster. Lyceum in Docker Desktop reaches it at `http://host.docker.internal:11434/v1`. On Apple silicon with 16 GB or more, `qwen2.5:7b` writes good quizzes and answers in seconds; `llama3.2` is quicker but simpler. On Linux with an NVIDIA GPU, Ollama's Docker image (`ollama/ollama`) can use the GPU too. For **ask this course**, also set an **embedding model** (for example `nomic-embed-text` in Ollama): Lyceum indexes the course's transcripts once and then finds passages by meaning, not just by matching words. Larger models write better quizzes. Summaries, quizzes and flashcards are generated once per lesson and shared by everyone; **Regenerate** replaces them.
 
 ## Single sign-on
 

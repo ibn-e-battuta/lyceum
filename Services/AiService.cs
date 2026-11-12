@@ -241,7 +241,11 @@ public sealed partial class AiService(
         var raw = await CompleteAsync([
             new("system", "You create flashcards for spaced-repetition study. You reply with JSON only."),
             new("user", $$"""
-                Create 8 to 12 flashcards for this lesson ("{{lesson.Title}}"). The front is a short question or term, the back a short, precise answer.
+                Create 8 to 12 flashcards that help someone remember the important ideas of this lesson ("{{lesson.Title}}").
+                - The front asks one clear question about a concept, fact, technique or term from the lesson, ending with "?".
+                - The back answers it in one or two short sentences.
+                - Write the cards in your own words: never copy sentences from the transcript.
+                - Skip greetings, introductions of the speaker and course logistics. If the lesson has fewer ideas, make fewer cards.
                 Use the transcript's language. Reply with JSON: {"cards":[{"front":"…","back":"…"}]}
 
                 Transcript:
@@ -249,8 +253,10 @@ public sealed partial class AiService(
                 """),
         ], json: true, ct);
         var cards = (ParseJson(raw)?["cards"] as JsonArray ?? [])
-            .Select(c => new Flashcard(c?["front"]?.ToString() ?? "", c?["back"]?.ToString() ?? ""))
+            .Select(c => new Flashcard(c?["front"]?.ToString().Trim() ?? "", c?["back"]?.ToString().Trim() ?? ""))
             .Where(c => c.Front.Length > 0 && c.Back.Length > 0)
+            // Small models sometimes echo transcript sentences as the "question": those cards teach nothing.
+            .Where(c => c.Front.EndsWith('?') || !text.Contains(c.Front, StringComparison.OrdinalIgnoreCase))
             .ToList();
         if (cards.Count == 0) throw new InvalidOperationException("The model didn't return usable flashcards. Try again or use a larger model.");
         await StoreAsync(lesson, "flashcards", JsonSerializer.Serialize(cards, Json));
