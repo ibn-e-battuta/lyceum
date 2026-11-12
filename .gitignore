@@ -8,3 +8,4 @@ keys/
 config/
 *.bak
 design.db
+.DS_Store
