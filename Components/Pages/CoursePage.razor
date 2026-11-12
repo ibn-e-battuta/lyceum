@@ -112,7 +112,7 @@ else
             }
             else
             {
-                <iframe @key="lesson.Id" src="@lesson.MediaUrl" title="@lesson.Title"
+                <iframe @key="lesson.Id" src="@lesson.ViewUrl" title="@lesson.Title"
                         sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-downloads allow-popups-to-escape-sandbox"></iframe>
             }
 
@@ -201,7 +201,7 @@ else
             }
             else
             {
-                <a class="btn ghost" href="@lesson.MediaUrl" target="_blank">@L["Open in new tab"] ↗</a>
+                <a class="btn ghost" href="@lesson.ViewUrl" target="_blank">@L["Open in new tab"] ↗</a>
             }
             @if (lesson.Attachments.Count > 0)
             {
@@ -513,6 +513,7 @@ else
             audioMode = await module.InvokeAsync<bool>("getPref", "lyceum.audio", false);
             if (audioMode && lesson?.Kind == LessonKind.Video) Transcoder.Enqueue(lesson, PlaybackVariant.Audio);
             await offline.InvokeVoidAsync("flushProgress");
+            await module.InvokeVoidAsync("listenLessonLinks", selfRef);
             try
             {
                 cast = await JS.InvokeAsync<IJSObjectReference>("import", "./cast.js");
@@ -1764,6 +1765,7 @@ else
             try
             {
                 await module.InvokeVoidAsync("detach");
+                await module.InvokeVoidAsync("listenLessonLinks", null);
                 await module.DisposeAsync();
                 if (offline is not null) await offline.DisposeAsync();
                 if (cast is not null) await cast.DisposeAsync();
@@ -1772,4 +1774,11 @@ else
         }
         selfRef?.Dispose();
     }
+
+    /// <summary>A reading page linked to another lesson of this course (see /lesson/{id}/… in Program.cs).</summary>
+    [JSInvokable]
+    public Task OpenLesson(string lessonId) => InvokeAsync(() =>
+    {
+        if (course is not null && lessons.Any(l => l.Id == lessonId)) Nav.NavigateTo($"course/{course.Id}/{lessonId}");
+    });
 }

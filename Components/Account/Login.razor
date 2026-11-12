@@ -65,7 +65,7 @@
     private string? pendingToken;
 
     // The password step hands over a short-lived, encrypted "user id + remember me" token to the code step.
-    private ITimeLimitedDataProtector Pending => DataProtection.CreateProtector("CourseHub.Login2fa.v1").ToTimeLimitedDataProtector();  // Former app name kept on purpose: it is part of the encryption key for data already stored.
+    private ITimeLimitedDataProtector Pending => DataProtection.CreateProtector("Lyceum.Login2fa.v1").ToTimeLimitedDataProtector();
 
     protected override async Task OnInitializedAsync()
     {

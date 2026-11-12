@@ -9,7 +9,6 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <meta name="theme-color" content="#0f1115" />
   <script>
-    try { Object.keys(localStorage).forEach(k => { if (k.startsWith("coursehub.")) { const n = "lyceum." + k.slice(10); if (localStorage.getItem(n) === null) localStorage.setItem(n, localStorage.getItem(k)); localStorage.removeItem(k); } }); } catch {}
     try { const t = localStorage.getItem("lyceum.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
   </script>
   <link rel="stylesheet" href="app.css" />

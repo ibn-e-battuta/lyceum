@@ -15,6 +15,7 @@ Built with ASP.NET Core (.NET 10), Blazor Server and SQLite. It ships as one Doc
 - **AI study tools** (optional, with a local model such as Ollama): lesson summaries, quizzes, flashcards (with Anki export), "ask this course" with links to the exact moments (it searches by meaning when you set an embedding model), and caption translation into 20 languages.
 - **Spaced repetition:** add flashcards to your review deck and Lyceum brings each one back just before you'd forget it (SM-2, like Anki).
 - **Daily goals & reminders:** set minutes per day and get an ntfy push at your chosen time if you haven't reached them.
+- **Reading lessons:** PDFs, Markdown and HTML pages, including multi-page HTML books whose images, styles and chapter links all work.
 - **Attachments & code:** slides, PDFs and zips named after a lesson appear next to it. Code folders can be browsed with syntax highlighting or downloaded as a zip.
 - **Offline:** save lessons or whole courses on a phone or laptop and watch without internet. Progress syncs when you're back online.
 - **Stats, paths and motivation:** daily watch time, streaks, finish-date estimates, learning paths, printable completion certificates, and a household activity feed.
@@ -79,7 +80,7 @@ courses/
 │   ├── cheatsheet.md         ← other files are shown as section downloads
 │   └── cover.jpg             ← optional cover image
 ├── System Design/
-│   ├── 01 Intro.html         ← HTML and PDF lessons work too
+│   ├── 01 Intro.html         ← HTML, Markdown and PDF lessons work too
 │   ├── Videos/               ← sub-folders become sections
 │   │   ├── 001 Bitly.mp4
 │   │   └── 002 Dropbox.mp4
@@ -88,6 +89,7 @@ courses/
 ```
 
 - Lessons are sorted naturally, so `2.` comes before `10.`. Leading numbers are removed from titles.
+- The full rules (supported file types, sections, attachments, naming, HTML lessons) are in [Course folder rules](docs/course-layout.md).
 - Chapters embedded in MP4/MKV files appear as markers under the video and in a Chapters tab.
 - To set a course's title, author, description, cover or sections, add a `course.json` to its folder:
 
@@ -169,9 +171,9 @@ The two apps never talk to each other. They share your courses folder:
 ```
 
 - **Lectern writes into the course folders.** You give it a document's share link and a folder inside a course, such as `Mastering C#/Docs`. It saves the document there as Markdown with its images and attachments, plus a PDF.
-- **Lyceum shows them with the course.** The `Docs` folder appears as a section of the course:
-  - each document's PDF is a reading lesson, tracked like any other lesson;
-  - its Markdown pages and attachments are the section's files.
+- **Lyceum shows them with the course.** The `Docs` folder appears after the course's other sections:
+  - each document's Markdown chapters are reading lessons, with their images, tracked like any other lesson;
+  - the whole-document PDF, `README.md`, `CHANGES.md` and attachments are the section's downloads.
 - **New and updated documents show up by themselves.** Lyceum watches the folder, or rescans every 30 minutes where watching isn't available.
 - **Lectern keeps everything else in its own data folder.** Its links, history and docs website stay out of the courses folder, so Lyceum only ever sees course content.
 
@@ -382,30 +384,7 @@ In **Nginx Proxy Manager**, turn on *Websockets Support* for the proxy host.
 docker compose pull && docker compose up -d
 ```
 
-Database changes are applied automatically on startup. Databases from the early single-user builds are backed up next to the original as `lyceum.db.pre-accounts-*.bak`, and their data goes to the first account you create.
-
-### Upgrading from CourseHub
-
-Lyceum was called **CourseHub** up to version 0.3.0. Your data carries over; your configuration needs a few renames.
-
-**Moved automatically on first start:**
-- **Database:** `/config/coursehub.db` (with its `-wal`/`-shm` files) becomes `/config/lyceum.db`.
-- **Backups:** existing `coursehub-backup-*.zip` files are still listed and can be restored.
-- **Per-browser data:** saved settings, offline progress that hasn't synced yet, and lessons downloaded for offline viewing move to the new names the first time each browser opens Lyceum.
-- **Passwords, two-factor setups and API keys keep working.** The encryption keys in `/config/keys` are unchanged.
-
-**Change these yourself:**
-
-| Before | Now |
-| --- | --- |
-| image `ghcr.io/ibn-e-battuta/coursehub` | `ghcr.io/ibn-e-battuta/lyceum` |
-| `CourseHub__…` environment variables | `Lyceum__…` (for example `Lyceum__TrustForwardedHeaders`) |
-| `COURSEHUB_ADMIN_USER` / `COURSEHUB_ADMIN_PASSWORD` | `LYCEUM_ADMIN_USER` / `LYCEUM_ADMIN_PASSWORD` |
-| Prometheus metrics `coursehub_*` | `lyceum_*` |
-| Helm chart `deploy/helm/coursehub`, Unraid template `coursehub.xml` | `deploy/helm/lyceum`, `lyceum.xml` |
-| A `ConnectionStrings__Progress` that names `coursehub.db` | Leave it as is, or rename the file and the setting together |
-
-Everyone is signed out once after upgrading, because the sign-in cookie was renamed.
+Database changes are applied automatically on startup.
 
 ## Running from source
 

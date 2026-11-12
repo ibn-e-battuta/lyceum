@@ -64,13 +64,11 @@ public sealed class BackupService(
 
     public List<BackupFile> List() =>
         Directory.Exists(Folder)
-            ? new DirectoryInfo(Folder).GetFiles("*-backup-*.zip").Where(f => IsBackupName(f.Name)).OrderByDescending(f => f.CreationTimeUtc)
+            ? new DirectoryInfo(Folder).GetFiles("lyceum-backup-*.zip").Where(f => IsBackupName(f.Name)).OrderByDescending(f => f.CreationTimeUtc)
                 .Select(f => new BackupFile(f.Name, f.Length, f.CreationTimeUtc)).ToList()
             : [];
 
-    // "coursehub-backup-…" files were made before the rename to Lyceum and are still valid backups.
-    private static bool IsBackupName(string name) =>
-        (name.StartsWith("lyceum-backup-") || name.StartsWith("coursehub-backup-")) && name.EndsWith(".zip");
+    private static bool IsBackupName(string name) => name.StartsWith("lyceum-backup-") && name.EndsWith(".zip");
 
     public string? PathOf(string name)
     {

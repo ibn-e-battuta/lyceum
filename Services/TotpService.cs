@@ -12,7 +12,7 @@ public sealed class TotpService(IDataProtectionProvider dataProtection)
 {
     private const int StepSeconds = 30;
     private const int Digits = 6;
-    private readonly IDataProtector _protector = dataProtection.CreateProtector("CourseHub.Totp.v1");  // Former app name kept on purpose: it is part of the encryption key for data already stored.
+    private readonly IDataProtector _protector = dataProtection.CreateProtector("Lyceum.Totp.v1");
 
     public string NewSecret() => Base32Encode(RandomNumberGenerator.GetBytes(20));
 

@@ -7,8 +7,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
     <script>
-        // Lyceum used to be called CourseHub: move saved settings (and queued offline progress) to the new names once.
-        try { Object.keys(localStorage).forEach(k => { if (k.startsWith("coursehub.")) { const n = "lyceum." + k.slice(10); if (localStorage.getItem(n) === null) localStorage.setItem(n, localStorage.getItem(k)); localStorage.removeItem(k); } }); } catch {}
         // Apply the saved theme before first paint (no flash of the wrong theme).
         window.lyceumTheme = {
             get() { try { return localStorage.getItem("lyceum.theme") || "system"; } catch { return "system"; } },

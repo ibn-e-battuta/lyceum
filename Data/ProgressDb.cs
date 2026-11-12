@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 
@@ -329,86 +328,6 @@ public class ProgressDb(DbContextOptions<ProgressDb> options) : DbContext(option
             e.HasIndex(c => new { c.UserId, c.Front });
         });
         b.Entity<PassageEmbedding>().HasIndex(p => new { p.LessonPath, p.Model });
-    }
-
-    /// <summary>
-    /// Applies migrations. A database from the early single-user builds (no migration history) is
-    /// backed up and its progress, notes, stats, preferences and paths are copied into the new schema
-    /// as user #1 — the first account created on the setup page.
-    /// </summary>
-    public async Task MigrateWithLegacyImportAsync(ILogger logger)
-    {
-        var conn = (SqliteConnection)Database.GetDbConnection();
-        var file = new SqliteConnectionStringBuilder(conn.ConnectionString).DataSource;
-        string? legacyCopy = null;
-
-        if (File.Exists(file))
-        {
-            await conn.OpenAsync();
-            bool hasHistory, hasProgress;
-            await using (var cmd = conn.CreateCommand())
-            {
-                cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('__EFMigrationsHistory','Progress')";
-                var names = new List<string>();
-                await using var r = await cmd.ExecuteReaderAsync();
-                while (await r.ReadAsync()) names.Add(r.GetString(0));
-                hasHistory = names.Contains("__EFMigrationsHistory");
-                hasProgress = names.Contains("Progress");
-            }
-            await conn.CloseAsync();
-
-            if (!hasHistory && hasProgress)
-            {
-                SqliteConnection.ClearAllPools();
-                legacyCopy = file + $".pre-accounts-{DateTime.Now:yyyyMMddHHmmss}.bak";
-                File.Move(file, legacyCopy);
-                foreach (var ext in new[] { "-wal", "-shm" })
-                    if (File.Exists(file + ext)) File.Move(file + ext, legacyCopy + ext);
-                logger.LogWarning("Upgrading a database from an older Lyceum. The original is kept at {Backup}", legacyCopy);
-            }
-        }
-
-        await Database.MigrateAsync();
-
-        if (legacyCopy is null) return;
-        await conn.OpenAsync();
-        try
-        {
-            await Exec(conn, $"ATTACH DATABASE '{legacyCopy.Replace("'", "''")}' AS legacy");
-            var legacyTables = new List<string>();
-            await using (var cmd = conn.CreateCommand())
-            {
-                cmd.CommandText = "SELECT name FROM legacy.sqlite_master WHERE type='table'";
-                await using var r = await cmd.ExecuteReaderAsync();
-                while (await r.ReadAsync()) legacyTables.Add(r.GetString(0));
-            }
-            if (legacyTables.Contains("Progress"))
-                await Exec(conn, """INSERT INTO Progress (UserId, LessonPath, CoursePath, PositionSeconds, DurationSeconds, Completed, UpdatedAt) SELECT 1, LessonPath, CoursePath, PositionSeconds, DurationSeconds, Completed, UpdatedAt FROM legacy.Progress""");
-            if (legacyTables.Contains("Notes"))
-                await Exec(conn, """INSERT INTO Notes (UserId, Kind, CoursePath, LessonPath, Seconds, Text, CreatedAt, UpdatedAt) SELECT 1, Kind, CoursePath, LessonPath, Seconds, Text, CreatedAt, UpdatedAt FROM legacy.Notes""");
-            if (legacyTables.Contains("WatchDays"))
-                await Exec(conn, """INSERT INTO WatchDays (UserId, Day, CoursePath, Seconds) SELECT 1, Day, CoursePath, Seconds FROM legacy.WatchDays""");
-            if (legacyTables.Contains("CourseMeta"))
-                await Exec(conn, """INSERT INTO CourseMeta (UserId, CoursePath, Favorite, Archived, SkipIntroSeconds) SELECT 1, CoursePath, Favorite, Archived, SkipIntroSeconds FROM legacy.CourseMeta""");
-            if (legacyTables.Contains("Paths") && legacyTables.Contains("PathItems"))
-            {
-                await Exec(conn, """INSERT INTO Paths (Id, UserId, Name, CreatedAt) SELECT Id, 1, Name, CreatedAt FROM legacy.Paths""");
-                await Exec(conn, """INSERT INTO PathItems (Id, LearningPathId, CoursePath, "Order") SELECT Id, LearningPathId, CoursePath, "Order" FROM legacy.PathItems""");
-            }
-            await Exec(conn, "DETACH DATABASE legacy");
-            logger.LogInformation("Imported data from the old database; it will belong to the first account you create");
-        }
-        finally
-        {
-            await conn.CloseAsync();
-        }
-    }
-
-    private static async Task Exec(SqliteConnection conn, string sql)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        await cmd.ExecuteNonQueryAsync();
     }
 }
 

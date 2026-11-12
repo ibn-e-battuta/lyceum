@@ -74,21 +74,15 @@ var dbFile = new SqliteConnectionStringBuilder(connectionString).DataSource;
 if (Path.GetDirectoryName(Path.GetFullPath(dbFile)) is { } dbDir)
 {
     Directory.CreateDirectory(dbDir);
-    // Lyceum used to be called CourseHub: carry an existing coursehub.db (with its WAL files) over once.
-    var legacyDb = Path.Combine(dbDir, "coursehub.db");
-    if (Path.GetFileName(dbFile) == "lyceum.db" && !File.Exists(dbFile) && File.Exists(legacyDb))
-        foreach (var suffix in new[] { "", "-wal", "-shm" })
-            if (File.Exists(legacyDb + suffix)) File.Move(legacyDb + suffix, Path.GetFullPath(dbFile) + suffix);
 }
 builder.Services.AddDbContextFactory<ProgressDb>(o => o.UseSqlite(connectionString));
 
 // ---------- auth ----------
 
-// Keys encrypt the sign-in cookie. Persisting them means restarts/upgrades don't sign everyone out.
-// "CourseHub" (the app's former name) is deliberately kept here and in every CreateProtector purpose:
-// it is part of the encryption key, so changing it would make stored 2FA secrets unreadable.
+// Keys encrypt the sign-in cookie and stored 2FA secrets. Persisting them means restarts don't sign everyone out.
+// The application name is part of the encryption key: changing it makes stored 2FA secrets unreadable.
 var keysDir = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, hubOptions.KeysFolder));
-builder.Services.AddDataProtection().SetApplicationName("CourseHub").PersistKeysToFileSystem(Directory.CreateDirectory(keysDir));
+builder.Services.AddDataProtection().SetApplicationName("Lyceum").PersistKeysToFileSystem(Directory.CreateDirectory(keysDir));
 
 const string SmartScheme = "CookieOrApiKey";
 const string ExternalScheme = "External";
@@ -193,7 +187,7 @@ var app = builder.Build();
 
 await using (var db = await app.Services.GetRequiredService<IDbContextFactory<ProgressDb>>().CreateDbContextAsync())
 {
-    await db.MigrateWithLegacyImportAsync(app.Logger);
+    await db.Database.MigrateAsync();
 }
 await app.Services.GetRequiredService<UserService>().BootstrapAdminAsync(
     builder.Configuration["LYCEUM_ADMIN_USER"], builder.Configuration["LYCEUM_ADMIN_PASSWORD"]);
@@ -350,6 +344,50 @@ app.MapGet("/media/{id}", async (string id, string? v, HttpContext ctx, ClaimsPr
     return TypedResults.PhysicalFile(lesson.FullPath, type, enableRangeProcessing: true);
 });
 
+// Reading lessons (HTML and Markdown pages) with the files next to them, so a page's relative
+// images, stylesheets and links work: /lesson/{id}/page.html, /lesson/{id}/assets/site.css…
+app.MapGet("/lesson/{id}/{**path}", async (string id, string? path, HttpContext ctx, ClaimsPrincipal user, CourseLibrary lib, UserService users, WatchTimeService watch) =>
+{
+    var lesson = lib.GetLesson(id);
+    var course = lesson is null ? null : await AccessibleCourse(user, lib.CourseOf(lesson), users);
+    if (lesson is null || course is null || !lesson.IsPage) return Results.NotFound();
+    var viewer = await users.GetAsync(user.GetUserId()!.Value);
+    if (viewer is { IsKid: true } kid && await watch.RemainingAsync(kid) is <= 0)
+        return Results.Problem("Time's up for today.", statusCode: StatusCodes.Status403Forbidden);
+
+    // Resolve next to the lesson, and never outside its course or into hidden files.
+    var folder = Path.GetDirectoryName(lesson.FullPath)!;
+    var target = Path.GetFullPath(Path.Combine(folder, path ?? ""));
+    var root = Path.GetFullPath(course.FullPath) + Path.DirectorySeparatorChar;
+    if (!target.StartsWith(root, StringComparison.Ordinal) || !File.Exists(target)
+        || target[root.Length..].Split(Path.DirectorySeparatorChar).Any(s => s.StartsWith('.')))
+        return Results.NotFound();
+
+    // A link to another lesson of this course: let the player open it, so progress and the outline follow.
+    // (Opened in its own tab instead, the page simply follows the link.)
+    var other = course.AllLessons.FirstOrDefault(l => l.FullPath == target);
+    if (ctx.Request.Headers["Sec-Fetch-Dest"] == "iframe" && other is not null && other.Id != lesson.Id)
+        return Results.Content(LessonPages.OpenLesson(other.Id), "text/html; charset=utf-8");
+
+    var ext = Path.GetExtension(target).ToLowerInvariant();
+    ctx.Response.Headers.CacheControl = "private, no-cache";
+    if (ext is ".md" or ".markdown")
+    {
+        var title = other?.Title ?? Path.GetFileNameWithoutExtension(target);
+        return Results.Content(LessonPages.Markdown(await File.ReadAllTextAsync(target), title), "text/html; charset=utf-8");
+    }
+    if (ext is ".html" or ".htm")
+    {
+        // Stream the page as it is, then add the script that sends outside links to a new tab.
+        ctx.Response.ContentType = "text/html; charset=utf-8";
+        await using (var file = File.OpenRead(target)) await file.CopyToAsync(ctx.Response.Body);
+        await ctx.Response.WriteAsync(LessonPages.LinkScript);
+        return Results.Empty;
+    }
+    if (!contentTypes.TryGetContentType(target, out var type)) type = "application/octet-stream";
+    return TypedResults.PhysicalFile(target, type, enableRangeProcessing: true);
+});
+
 // The Downloads page asks this when online, and clears its downloads for accounts that may not keep any.
 app.MapGet("/api/offline/policy", async (ClaimsPrincipal user, UserService users) =>
     Results.Ok(new { allowed = await users.GetAsync(user.GetUserId()!.Value) is not ({ IsKid: true } or { IsGuest: true }) }));
@@ -485,7 +523,7 @@ app.Run();
 static string LocalUrl(string? url) => url is { Length: > 0 } u && u.StartsWith('/') && !u.StartsWith("//") && !u.StartsWith("/\\") ? u : AppPaths.Base + "/";
 
 static bool IsApiRequest(HttpRequest r) =>
-    r.Path.StartsWithSegments("/api") || r.Path.StartsWithSegments("/media") || r.Path.StartsWithSegments("/thumb")
+    r.Path.StartsWithSegments("/api") || r.Path.StartsWithSegments("/media") || r.Path.StartsWithSegments("/lesson") || r.Path.StartsWithSegments("/thumb")
     || r.Path.StartsWithSegments("/cover") || r.Path.StartsWithSegments("/subs") || r.Path.StartsWithSegments("/attachment")
     || r.Path.StartsWithSegments("/code") && (r.Path.Value?.EndsWith("/raw") == true || r.Path.Value?.EndsWith("/zip") == true);
 

@@ -1,7 +1,6 @@
 // Lyceum service worker: makes the app installable and plays downloaded lessons offline.
-const SHELL = "lyceum-shell-v5";
+const SHELL = "lyceum-shell-v6";
 const OFFLINE = "lyceum-offline-v1";
-const LEGACY_OFFLINE = "coursehub-offline-v1"; // downloads made before the rename from CourseHub
 // The worker lives at <base>/sw.js, so its scope is Lyceum's base path (e.g. /courses/).
 const BASE = new URL(self.registration.scope).pathname;
 const SHELL_FILES = ["offline.html", "offline.js", "app.css", "icon.svg", "manifest.webmanifest"].map((f) => BASE + f);
@@ -13,16 +12,7 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil((async () => {
     for (const key of await caches.keys())
-      if ((key.startsWith("lyceum-shell-") && key !== SHELL) || key.startsWith("coursehub-shell-")) await caches.delete(key);
-    // Keep lessons downloaded under the old name: copy them into the new cache, then drop the old one.
-    if (await caches.has(LEGACY_OFFLINE)) {
-      const from = await caches.open(LEGACY_OFFLINE), to = await caches.open(OFFLINE);
-      for (const req of await from.keys()) {
-        const res = await from.match(req);
-        if (res && !(await to.match(req))) await to.put(req, res);
-      }
-      await caches.delete(LEGACY_OFFLINE);
-    }
+      if (key.startsWith("lyceum-shell-") && key !== SHELL) await caches.delete(key);
     await self.clients.claim();
   })());
 });

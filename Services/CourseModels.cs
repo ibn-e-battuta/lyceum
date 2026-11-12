@@ -13,6 +13,13 @@ public sealed record Lesson(
     string? SubtitlePath)
 {
     public string MediaUrl => AppPaths.Url($"/media/{Id}");
+    /// <summary>
+    /// Where a reading lesson is displayed. HTML and Markdown pages are served from a folder-like URL
+    /// (/lesson/{id}/page.html) so their relative images, styles and links resolve next to them.
+    /// </summary>
+    public string ViewUrl => IsPage ? AppPaths.Url($"/lesson/{Id}/{Uri.EscapeDataString(Path.GetFileName(FullPath))}") : MediaUrl;
+    public bool IsPage => Kind == LessonKind.Article && Path.GetExtension(FullPath).ToLowerInvariant() is ".html" or ".htm" or ".md" or ".markdown";
+    public bool IsMarkdown => Path.GetExtension(FullPath).ToLowerInvariant() is ".md" or ".markdown";
     public string ThumbUrl => AppPaths.Url($"/thumb/{Id}");
     public string SubtitleUrl => AppPaths.Url($"/subs/{Id}.vtt");
     /// <summary>Slides, PDFs, zips… whose file names start with this lesson's name.</summary>

@@ -307,3 +307,15 @@ export function attachTranscript(id) {
   };
   if (state?.video) highlight(state.video.currentTime);
 }
+
+// Reading pages hand links to other lessons to the player (the server answers such a link with a postMessage).
+let lessonLinks = null;
+export function listenLessonLinks(dotnet) {
+  if (lessonLinks) window.removeEventListener("message", lessonLinks);
+  lessonLinks = null;
+  if (!dotnet) return;
+  lessonLinks = (e) => {
+    if (e.origin === location.origin && typeof e.data?.lyceumLesson === "string") dotnet.invokeMethodAsync("OpenLesson", e.data.lyceumLesson).catch(() => {});
+  };
+  window.addEventListener("message", lessonLinks);
+}

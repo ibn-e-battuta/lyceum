@@ -40,7 +40,13 @@ public sealed partial class CourseLibrary(
 {
     public const string ManifestFile = "course.json";
     private static readonly HashSet<string> VideoExt = new(StringComparer.OrdinalIgnoreCase) { ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".wmv", ".flv", ".ts", ".mpg", ".mpeg" };
-    private static readonly HashSet<string> ArticleExt = new(StringComparer.OrdinalIgnoreCase) { ".html", ".htm", ".pdf" };
+    private static readonly HashSet<string> ArticleExt = new(StringComparer.OrdinalIgnoreCase) { ".html", ".htm", ".pdf", ".md", ".markdown" };
+    private static readonly HashSet<string> MarkdownExt = new(StringComparer.OrdinalIgnoreCase) { ".md", ".markdown" };
+    /// <summary>Repository boilerplate that stays a download even though it is Markdown.</summary>
+    private static readonly HashSet<string> NotLessons = new(StringComparer.OrdinalIgnoreCase)
+        { "README", "CHANGES", "CHANGELOG", "LICENSE", "CONTRIBUTING", "CODE_OF_CONDUCT", "SECURITY" };
+    /// <summary>Lectern writes this into every document folder it syncs.</summary>
+    private const string LecternMarker = ".sync-state.json";
     private static readonly HashSet<string> SubtitleExt = new(StringComparer.OrdinalIgnoreCase) { ".vtt", ".srt" };
     private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules", "wwwroot", "Properties", "target" };
     /// <summary>Cover image names, in priority order (Plex/Jellyfin/Kodi conventions included). Matched case-insensitively.</summary>
@@ -49,7 +55,9 @@ public sealed partial class CourseLibrary(
     private static readonly HashSet<string> SkipFiles = new(
         new[] { ManifestFile, "Thumbs.db", "desktop.ini" }.Concat(CoverNames.SelectMany(n => ImageExt.Select(e => n + e))),
         StringComparer.OrdinalIgnoreCase);
-    private static readonly string[] ProjectMarkers = ["*.csproj", "*.sln", "*.slnx", "package.json", "Cargo.toml", "*.fsproj"];
+    private static readonly string[] ProjectMarkers = ["*.csproj", "*.sln", "*.slnx", "package.json", "Cargo.toml", "*.fsproj", "go.mod", "pyproject.toml", "pom.xml", "build.gradle", "build.gradle.kts"];
+    /// <summary>Folders of images and styles that pages refer to; never shown as sections or resources.</summary>
+    private static readonly HashSet<string> AssetDirs = new(StringComparer.OrdinalIgnoreCase) { "assets", "_assets", "static" };
     private static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -456,7 +464,9 @@ public sealed partial class CourseLibrary(
             any |= CollectSections(lib, sub, [.. path, CleanTitle(Path.GetFileName(sub), isFile: false)], into, childResources);
 
         // A folder without any lessons is course material (code, slides...): show it as one resource.
-        if (!any && Directory.EnumerateFileSystemEntries(dir).Any(e => !Path.GetFileName(e).StartsWith('.')))
+        // Asset folders (images for HTML/Markdown pages) are just plumbing, so they stay hidden.
+        if (!any && AssetDirs.Contains(Path.GetFileName(dir))) { }
+        else if (!any && Directory.EnumerateFileSystemEntries(dir).Any(e => !Path.GetFileName(e).StartsWith('.')))
             AddResource(lib, dir, title, resources);
         else
             resources.AddRange(childResources);
@@ -476,7 +486,9 @@ public sealed partial class CourseLibrary(
                 var n = Path.GetFileName(d);
                 return !n.StartsWith('.') && !SkipDirs.Contains(n);
             })
-            .OrderBy(d => Path.GetFileName(d), NaturalComparer.Instance);
+            // A course's documents (Lectern's "Docs") come after its numbered sections.
+            .OrderBy(d => Path.GetFileName(d).Equals("Docs", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(d => Path.GetFileName(d), NaturalComparer.Instance);
 
     public static bool IsCodeProject(string dir) =>
         ProjectMarkers.Any(m => Directory.EnumerateFiles(dir, m).Any());
@@ -501,6 +513,21 @@ public sealed partial class CourseLibrary(
                 && " .-_([".Contains(name[stem.Length]));
         }
 
+        // A Lectern document folder: its Markdown pages are the lessons; the whole-document PDF is a download.
+        var lectern = File.Exists(Path.Combine(dir, LecternMarker));
+        // "index.html" next to other pages is usually a duplicate cover page or table of contents.
+        var pages = all.Count(f => Path.GetExtension(f) is var e && (e.Equals(".html", StringComparison.OrdinalIgnoreCase) || e.Equals(".htm", StringComparison.OrdinalIgnoreCase)));
+        bool IsLesson(string f)
+        {
+            var ext = Path.GetExtension(f);
+            var stem = Path.GetFileNameWithoutExtension(f);
+            if (!ArticleExt.Contains(ext)) return false;
+            if (MarkdownExt.Contains(ext) && NotLessons.Contains(stem)) return false;
+            if (lectern && ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase)) return false;
+            if (pages > 1 && stem.Equals("index", StringComparison.OrdinalIgnoreCase) && !ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase) && !MarkdownExt.Contains(ext)) return false;
+            return true;
+        }
+
         var attachmentsByStem = new Dictionary<string, List<Attachment>>(StringComparer.OrdinalIgnoreCase);
         var looseFiles = new List<Attachment>();
         var lessonFiles = new List<string>();
@@ -516,7 +543,7 @@ public sealed partial class CourseLibrary(
                 if (!attachmentsByStem.TryGetValue(owner, out var list)) attachmentsByStem[owner] = list = [];
                 list.Add(MakeAttachment(lib, f));
             }
-            else if (ArticleExt.Contains(ext)) lessonFiles.Add(f);
+            else if (IsLesson(f)) lessonFiles.Add(f);
             else looseFiles.Add(MakeAttachment(lib, f));
         }
 
@@ -541,7 +568,7 @@ public sealed partial class CourseLibrary(
                     .ThenBy(s => s.Length)
                     .FirstOrDefault();
             }
-            result[i] = new Lesson(StableId(rel), CleanTitle(info.Name, isFile: true), rel, f, kind, info.Length, duration, subtitle)
+            result[i] = new Lesson(StableId(rel), LessonTitle(f), rel, f, kind, info.Length, duration, subtitle)
             {
                 Attachments = kind == LessonKind.Video && attachmentsByStem.TryGetValue(stem, out var a) ? a : [],
             };
@@ -591,9 +618,50 @@ public sealed partial class CourseLibrary(
         });
     }
 
+    /// <summary>
+    /// The file name, cleaned up. Pages named like URLs ("02.05-method-based-routing.html", "index.html")
+    /// use their HTML &lt;title&gt; instead, and other slug names lose their dashes.
+    /// </summary>
+    private static string LessonTitle(string file)
+    {
+        var name = Path.GetFileName(file);
+        var stem = Path.GetFileNameWithoutExtension(file);
+        var slug = !stem.Contains(' ') && (stem.Contains('-') || stem.Contains('_') || stem.Equals("index", StringComparison.OrdinalIgnoreCase));
+        if (!slug) return CleanTitle(name, isFile: true);
+        var ext = Path.GetExtension(file);
+        if ((ext.Equals(".html", StringComparison.OrdinalIgnoreCase) || ext.Equals(".htm", StringComparison.OrdinalIgnoreCase)) && HtmlTitle(file) is { } t) return t;
+        if (stem.Equals("index", StringComparison.OrdinalIgnoreCase)) return "Overview";
+        var words = SlugNumber().Replace(stem, "").Replace('-', ' ').Replace('_', ' ').Trim();
+        return words.Length == 0 ? CleanTitle(name, isFile: true) : char.ToUpperInvariant(words[0]) + words[1..];
+    }
+
+    /// <summary>Reads &lt;title&gt; from the start of an HTML file, minus a " — Site name" suffix.</summary>
+    private static string? HtmlTitle(string file)
+    {
+        try
+        {
+            using var reader = new StreamReader(file);
+            var buffer = new char[16384];
+            var head = new string(buffer, 0, reader.ReadBlock(buffer, 0, buffer.Length));
+            var m = TitleTag().Match(head);
+            if (!m.Success) return null;
+            var title = System.Net.WebUtility.HtmlDecode(m.Groups[1].Value).Trim();
+            var cut = title.IndexOfAny(['—', '–', '|', '｜']);
+            if (cut > 0) title = title[..cut].Trim();
+            return title.Length == 0 ? null : title;
+        }
+        catch (IOException) { return null; }
+    }
+
     public static string CleanTitle(string name, bool isFile)
     {
         var t = isFile ? Path.GetFileNameWithoutExtension(name) : name;
+        // A folder named like a URL ("lets-go.html", "getting_started") reads better as words.
+        if (!isFile && !t.Contains(' ') && (t.Contains('-') || t.Contains('_')))
+        {
+            t = PageExt().Replace(t, "").Replace('-', ' ').Replace('_', ' ').Trim();
+            if (t.Length > 0) t = char.ToUpperInvariant(t[0]) + t[1..];
+        }
         t = SiteSuffix().Replace(t, "");
         t = LeadingNumber().Replace(t, "");
         t = TrailingCopy().Replace(t, "");
@@ -609,6 +677,16 @@ public sealed partial class CourseLibrary(
 
     [GeneratedRegex(@"^\s*\d+\s*[\.\-_)]?\s+")]
     private static partial Regex LeadingNumber();
+
+    /// <summary>"02.05-" or "3_" at the start of a slug-style file name.</summary>
+    [GeneratedRegex(@"^\d+(\.\d+)*[-_.]")]
+    private static partial Regex SlugNumber();
+
+    [GeneratedRegex(@"\.html?$", RegexOptions.IgnoreCase)]
+    private static partial Regex PageExt();
+
+    [GeneratedRegex(@"<title[^>]*>([^<]{1,300})</title>", RegexOptions.IgnoreCase)]
+    private static partial Regex TitleTag();
 
     [GeneratedRegex(@"\s*[｜|_]\s*Hello Interview.*$", RegexOptions.IgnoreCase)]
     private static partial Regex SiteSuffix();

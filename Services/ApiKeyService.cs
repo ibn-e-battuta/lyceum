@@ -97,7 +97,7 @@ public sealed class ApiKeyAuthHandler(
     }
 
     private static bool IsMediaPath(PathString p) =>
-        p.StartsWithSegments("/media") || p.StartsWithSegments("/subs") || p.StartsWithSegments("/thumb")
+        p.StartsWithSegments("/media") || p.StartsWithSegments("/lesson") || p.StartsWithSegments("/subs") || p.StartsWithSegments("/thumb")
         || p.StartsWithSegments("/cover") || p.StartsWithSegments("/attachment");
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
