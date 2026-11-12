@@ -1,4 +1,3 @@
-@page "/course/{CourseId}"
 @page "/course/{CourseId}/{LessonId}"
 @inherits AppPage
 @implements IAsyncDisposable
@@ -21,15 +20,15 @@
 
 @if (course is null || lesson is null)
 {
-    <div class="empty"><h1>@L["Course not found"]</h1><a href="./">@L["Back to my courses"]</a></div>
+    <div class="empty"><h1>@L["Course not found"]</h1><a href="courses">@L["Back to my courses"]</a></div>
 }
 else
 {
 <PageTitle>@lesson.Title · @course.Title</PageTitle>
 
 <header class="topbar player-top">
-    <a class="brand" href="./" title="@L["My learning"]"><span class="logo" aria-hidden="true"></span></a>
-    <div class="course-title">@course.Title</div>
+    <a class="brand" href="./" title="@L["Home"]"><span class="logo" aria-hidden="true"></span></a>
+    <a class="course-title" href="@($"course/{course.Id}")" title="@L["Course details"]">← @course.Title</a>
     <button class="icon-btn @(meta.Favorite ? "on" : "")" title="@(meta.Favorite ? L["Remove from favourites"] : L["Add to favourites"])" @onclick="ToggleFavorite">@(meta.Favorite ? "★" : "☆")</button>
     <div class="top-progress" title="@L["{0} of {1} lessons complete", stats.Completed, stats.Total]">
         <svg viewBox="0 0 36 36" class="ring">
@@ -68,7 +67,7 @@ else
                     }
                     else if (videoSrc is not null)
                     {
-                        <video @key="AttachKey" @ref="videoRef" src="@videoSrc" controls playsinline preload="auto">
+                        <video @key="AttachKey" @ref="videoRef" src="@videoSrc" poster="@(Tools.Ffmpeg is not null ? lesson.ThumbUrl : null)" controls playsinline preload="auto">
                             @foreach (var t in Transcripts.Tracks(lesson))
                             {
                                 <track kind="subtitles" srclang="@t.Language" label="@t.Label" src="@($"{lesson.SubtitleUrl}{(t.IsOriginal ? "" : "?lang=" + t.Language)}")" />
@@ -314,6 +313,10 @@ else
     [Parameter] public string CourseId { get; set; } = "";
     [Parameter] public string? LessonId { get; set; }
     [SupplyParameterFromQuery(Name = "t")] public double? StartAt { get; set; }
+    /// <summary>Set by explicit "play" links (Resume, a lesson in the outline). Without it the first video waits for a click.</summary>
+    [SupplyParameterFromQuery(Name = "play")] public string? Play { get; set; }
+    /// <summary>True once the viewer has moved to another lesson in this player (next, outline, up-next).</summary>
+    private bool switchedLesson;
 
     private static readonly double[] Rates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
     private static readonly string[] TabNames = ["Overview", "Notes", "Bookmarks", "Chapters", "Transcript", "Study", "Discussion", "Resources"];
@@ -525,17 +528,21 @@ else
         if (attachedKey != AttachKey)
         {
             var newLesson = attachedKey?.Split('|')[0] != lesson.Id;
+            if (newLesson && attachedKey is not null) switchedLesson = true;
             attachedKey = AttachKey;
             if (newLesson) await module.InvokeVoidAsync("scrollLessonIntoView", $"l-{lesson.Id}");
             if (lesson.Kind == LessonKind.Video && MediaSrc is not null && !timeUp)
             {
                 var p = progress.GetValueOrDefault(lesson.RelativePath);
                 var resumeAt = resumeOverride ?? StartAt ?? (p is { Completed: false } ? p.PositionSeconds : 0);
+                // Play straight away only when asked to: a play link, a lesson switch, or carrying on in listening mode.
+                var play = switchedLesson || Play is not null || resumeOverride is not null;
                 resumeOverride = null;
                 await module.InvokeVoidAsync("attach", videoRef, viewerRef, selfRef, lesson.Id, resumeAt, playbackRate, meta.SkipIntroSeconds, new
                 {
                     title = lesson.Title, course = course!.Title, artwork = new Uri(new Uri(Nav.BaseUri), course.CoverPath is not null ? course.CoverUrl : lesson.ThumbUrl).ToString(),
                     hasNext = nextLesson is not null, hasPrev = prevLesson is not null,
+                    autoplay = play,
                 });
                 offlineSaved = offline is not null && await offline.InvokeAsync<bool>("isSaved", lesson.Id);
                 StateHasChanged();
@@ -1285,13 +1292,7 @@ else
     }
 
     /// <summary>Translates the section names the scanner generates; folder-based names are shown as-is.</summary>
-    private string SectionTitle(string? title)
-    {
-        if (title is null) return "";
-        if (title is "Course Content" or "Main Lessons" or "Getting Started") return L[title];
-        var m = System.Text.RegularExpressions.Regex.Match(title, @"^Section (\d+)(: (.*))?$");
-        return m.Success ? L["Section {0}", m.Groups[1].Value] + (m.Groups[3].Success ? ": " + m.Groups[3].Value : "") : title;
-    }
+    private string SectionTitle(string? title) => Format.SectionTitle(L, title);
 
     private static string AttIcon(string ext) => ext switch
     {

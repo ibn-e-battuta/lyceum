@@ -39,7 +39,7 @@
 
     private static readonly (string Href, string Label)[] Links =
     [
-        ("/", "My learning"), ("/review", "Review"), ("/paths", "Paths"), ("/notes", "Notes"), ("/stats", "Stats"), ("/settings", "Settings"),
+        ("/", "Home"), ("/courses", "My courses"), ("/review", "Review"), ("/paths", "Paths"), ("/notes", "Notes"), ("/stats", "Stats"), ("/settings", "Settings"),
     ];
 
     private string theme = "system";
@@ -49,6 +49,7 @@
     private bool IsActive(string href)
     {
         var path = "/" + Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0];
+        if (href == "/courses" && path.StartsWith("/course/")) return true; // a course belongs under My courses
         return href == "/" ? path == "/" : path.StartsWith(href);
     }
 

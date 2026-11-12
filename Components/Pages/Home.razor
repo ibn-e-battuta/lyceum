@@ -5,12 +5,11 @@
 @inject ProgressService ProgressService
 @inject UserDataService UserData
 @inject TranscriptService Transcripts
-@inject MediaTools Tools
 @inject ActivityService Activity
 @inject WatchTimeService WatchTime
 @inject ReviewService Reviews
 
-<PageTitle>My Learning · Lyceum</PageTitle>
+<PageTitle>@L["Home"] · Lyceum</PageTitle>
 
 <TopNav>
     <input class="search" type="search" placeholder="@L["Search courses, lessons and transcripts…"]" @bind="query" @bind:event="oninput" @bind:after="SearchTranscripts" />
@@ -81,7 +80,7 @@
     }
     else
     {
-        <h1 class="page-title">@L["My learning"]</h1>
+        <h1 class="page-title">@L["Welcome back, {0}", UserName]</h1>
         <div class="summary">
             <div><strong>@VisibleCourses.Count</strong><span>@L["courses"]</span></div>
             <div><strong>@VisibleCourses.Sum(c => c.LessonCount)</strong><span>@L["lessons"]</span></div>
@@ -120,7 +119,7 @@
                 @foreach (var c in inProgress)
                 {
                     var s = stats[c.Id];
-                    <a class="continue-card" href="@ResumeHref(c)">
+                    <a class="continue-card" href="@($"{ResumeHref(c)}?play=1")" title="@L["Resume"]">
                         <div class="thumb small" style="@ThumbStyle(c, s.ResumeLesson)">
                             <span class="play">▶</span>
                         </div>
@@ -180,36 +179,24 @@
             </ul>
         }
 
-        <div class="row-title with-filters">
-            <h2>@L["Courses"]</h2>
-            @if (VisibleLibraries.Count > 1)
-            {
-                <select class="library-select" @bind="libraryFilter">
-                    <option value="0">All libraries</option>
-                    @foreach (var l in VisibleLibraries) { <option value="@l.Id">@l.Name</option> }
-                </select>
-            }
-            <div class="chips">
-                @foreach (var f in Filters)
-                {
-                    var n = Filtered(f).Count();
-                    <button class="chip @(filter == f ? "active" : "")" @onclick="() => filter = f">@L[f] <span class="muted">@n</span></button>
-                }
-            </div>
-        </div>
-        <div class="grid">
-            @foreach (var c in Filtered(filter)) { @CourseCard(c) }
-        </div>
-        @if (!Filtered(filter).Any())
+        @if (suggestions.Count > 0)
         {
-            <p class="muted">No courses here.</p>
+            <h2 class="row-title">
+                @(inProgress.Count == 0 ? L["Pick a course to start"] : L["Start something new"])
+                <a class="tiny accent" href="courses">@L["All {0} courses", VisibleCourses.Count] →</a>
+            </h2>
+            <div class="grid">
+                @foreach (var c in suggestions) { @CourseCard(c) }
+            </div>
+        }
+        else
+        {
+            <p class="row-title"><a class="accent" href="courses">@L["Browse all {0} courses", VisibleCourses.Count] →</a></p>
         }
     }
 </main>
 
 @code {
-    private static readonly string[] Filters = ["All", "In progress", "Not started", "Completed", "Favourites", "Archived"];
-
     private Dictionary<string, CourseStats> stats = [];
     private Dictionary<string, CourseMeta> meta = [];
     private List<Course> inProgress = [];
@@ -219,15 +206,13 @@
     private int todayMinutes;
     private int dueCards;
     private string query = "";
-    private string filter = "All";
+    private List<Course> suggestions = [];
     private bool scanning;
 
     private string Q => query.Trim();
-    private int libraryFilter;
 
-    /// <summary>Courses in libraries this user can see, narrowed to the chosen library.</summary>
-    private List<Course> VisibleCourses => Library.CoursesFor(Access).Where(c => libraryFilter == 0 || c.LibraryId == libraryFilter).ToList();
-    private List<LibraryInfo> VisibleLibraries => Library.Libraries.Where(l => Access is null || Access.AllowsLibrary(l.Id)).Where(l => Library.Courses.Any(c => c.LibraryId == l.Id)).ToList();
+    /// <summary>Courses in libraries this user can see.</summary>
+    private List<Course> VisibleCourses => Library.CoursesFor(Access).ToList();
 
     private List<Course> matchingCourses => VisibleCourses
         .Where(c => c.Title.Contains(Q, StringComparison.OrdinalIgnoreCase) || (c.Author?.Contains(Q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
@@ -237,23 +222,6 @@
         .Where(x => x.l.Title.Contains(Q, StringComparison.OrdinalIgnoreCase)).ToList();
 
     private CourseMeta MetaOf(Course c) => meta.GetValueOrDefault(c.FolderName) ?? new CourseMeta();
-
-    private IEnumerable<Course> Filtered(string f) => VisibleCourses.Where(c =>
-    {
-        var s = stats.GetValueOrDefault(c.Id);
-        var m = MetaOf(c);
-        var complete = s is not null && s.Total > 0 && s.Completed == s.Total;
-        return f switch
-        {
-            "Archived" => m.Archived,
-            _ when m.Archived => false,
-            "In progress" => s?.Started == true && !complete,
-            "Not started" => s?.Started != true,
-            "Completed" => complete,
-            "Favourites" => m.Favorite,
-            _ => true,
-        };
-    }).OrderByDescending(c => MetaOf(c).Favorite);
 
     protected override async Task OnInitializedAsync()
     {
@@ -278,6 +246,12 @@
             .Where(c => stats[c.Id].Started && stats[c.Id].Completed < stats[c.Id].Total && !MetaOf(c).Archived)
             .OrderByDescending(c => stats[c.Id].LastWatched)
             .Take(6)
+            .ToList();
+        // Not started yet: favourites first, then alphabetical. A fresh library shows more.
+        suggestions = VisibleCourses
+            .Where(c => !stats[c.Id].Started && !MetaOf(c).Archived)
+            .OrderByDescending(c => MetaOf(c).Favorite).ThenBy(c => c.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(inProgress.Count == 0 ? 12 : 4)
             .ToList();
     }
 
@@ -336,47 +310,6 @@
 
     private RenderFragment CourseCard(Course c) => __builder =>
     {
-        var s = stats.GetValueOrDefault(c.Id);
-        var m = MetaOf(c);
-        var firstVideo = c.AllLessons.FirstOrDefault(l => l.Kind == LessonKind.Video);
-        <div class="card">
-            <a href="@ResumeHref(c)" class="card-link">
-                <div class="thumb" style="background:@Format.Gradient(c.Title)">
-                    <span class="initials">@Format.Initials(c.Title)</span>
-                    @if (c.CoverPath is not null || (firstVideo is not null && Tools.Ffmpeg is not null))
-                    {
-                        <span class="thumb-img" style="background-image:url('@c.CoverUrl')"></span>
-                    }
-                    else if (firstVideo is not null && firstVideo.FullPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
-                    {
-                        @* No ffmpeg: let the browser render a frame from the first lesson. *@
-                        <video class="thumb-frame" src="@($"{firstVideo.MediaUrl}#t=20")" preload="metadata" muted playsinline tabindex="-1"></video>
-                    }
-                    @if (s?.Started == true)
-                    {
-                        <div class="thumb-bar"><span style="width:@(s.Percent)%"></span></div>
-                    }
-                </div>
-                <div class="card-body">
-                    <h3>@c.Title</h3>
-                    @if (!string.IsNullOrWhiteSpace(c.Author)) { <div class="muted tiny">@c.Author</div> }
-                    <div class="muted tiny">
-                        @c.LessonCount lessons@(c.Sections.Count > 1 ? $" · {c.Sections.Count} sections" : "")@(c.TotalSeconds > 0 ? $" · {Format.Long(c.TotalSeconds)}" : "")
-                    </div>
-                    @if (s?.Started == true)
-                    {
-                        <div class="card-progress">
-                            <div class="bar"><span style="width:@(s.Percent)%"></span></div>
-                            <span class="tiny">@(s.Completed == s.Total ? "✓ Completed" : $"{s.Percent}%")</span>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="tiny accent">Start course →</div>
-                    }
-                </div>
-            </a>
-            <button class="fav @(m.Favorite ? "on" : "")" title="@(m.Favorite ? "Remove from favourites" : "Add to favourites")" @onclick="() => ToggleFavorite(c)">@(m.Favorite ? "★" : "☆")</button>
-        </div>
+        <CourseCard @key="c.Id" Course="c" Stats="@stats.GetValueOrDefault(c.Id)" Favorite="@MetaOf(c).Favorite" OnToggleFavorite="() => ToggleFavorite(c)" />
     };
 }

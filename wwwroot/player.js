@@ -117,7 +117,7 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
       setCaptions(video, !!store.get("lyceum.captions", false));
       if (resumeAt > 5 && resumeAt < video.duration - 10) video.currentTime = resumeAt;
       else if (s.skipIntro > 0 && video.duration > s.skipIntro + 5) video.currentTime = s.skipIntro;
-      video.play().catch(() => { /* autoplay blocked until the user interacts */ });
+      if (meta?.autoplay !== false) video.play().catch(() => { /* autoplay blocked until the user interacts */ });
     },
     ratechange: () => {
       store.set("lyceum.rate", video.playbackRate);

@@ -1,0 +1,184 @@
+@page "/course/{CourseId}"
+@inherits AppPage
+@inject CourseLibrary Library
+@inject ProgressService ProgressService
+@inject UserDataService UserData
+@inject MediaTools Tools
+
+@if (!loaded)
+{
+    <TopNav />
+}
+else if (course is null)
+{
+    <TopNav />
+    <div class="empty"><h1>@L["Course not found"]</h1><a href="courses">@L["Back to my courses"]</a></div>
+}
+else
+{
+    var complete = stats is { Total: > 0 } && stats.Completed == stats.Total;
+    var target = stats.ResumeLesson ?? course.AllLessons.FirstOrDefault();
+    var heroImage = course.CoverPath is not null || (Tools.Ffmpeg is not null && course.AllLessons.Any(l => l.Kind == LessonKind.Video));
+
+    <PageTitle>@course.Title · Lyceum</PageTitle>
+    <TopNav />
+
+    <main class="home narrow course-overview">
+        @if (!IsGuest)
+        {
+            <a class="back-link muted tiny" href="courses">← @L["My courses"]</a>
+        }
+
+        <section class="overview-hero">
+            <a class="overview-cover" href="@PlayHref(target)" style="background:@Format.Gradient(course.Title)" title="@L[PrimaryLabel]">
+                <span class="initials">@Format.Initials(course.Title)</span>
+                @if (heroImage)
+                {
+                    <span class="thumb-img" style="background-image:url('@course.CoverUrl')"></span>
+                }
+                @if (target is not null)
+                {
+                    <span class="cover-play" aria-hidden="true">▶</span>
+                }
+            </a>
+
+            <div class="overview-info">
+                <h1>@course.Title</h1>
+                @if (!string.IsNullOrWhiteSpace(course.Author)) { <div class="muted">@course.Author</div> }
+                <div class="overview-facts muted tiny">
+                    <span>@L["{0} lessons", course.LessonCount]</span>
+                    @if (course.Sections.Count > 1) { <span>@L["{0} sections", course.Sections.Count]</span> }
+                    @if (course.TotalSeconds > 0) { <span>@Format.Long(course.TotalSeconds)</span> }
+                    @if (course.Resources.Count > 0) { <span>💻 @L["Code included"]</span> }
+                </div>
+
+                @if (stats.Started)
+                {
+                    <div class="overview-progress">
+                        <div class="bar"><span style="width:@(stats.Percent)%"></span></div>
+                        <span class="tiny">@L["{0} of {1} lessons complete", stats.Completed, stats.Total]</span>
+                    </div>
+                }
+
+                <div class="overview-actions">
+                    @if (target is not null)
+                    {
+                        <a class="btn primary big" href="@PlayHref(target)">▶ @L[PrimaryLabel]</a>
+                    }
+                    @if (!IsGuest)
+                    {
+                        <button class="btn ghost big @(meta.Favorite ? "on" : "")" @onclick="ToggleFavorite">@(meta.Favorite ? "★ " + L["Favourite"] : "☆ " + L["Add to favourites"])</button>
+                    }
+                    @if (complete && !IsGuest)
+                    {
+                        <a class="btn ghost big" href="@($"certificate/{course.Id}")">🎓 @L["Certificate"]</a>
+                    }
+                </div>
+                @if (stats.Started && stats.ResumeLesson is { } resume && !complete)
+                {
+                    <div class="muted tiny">@L["Up next"]: @resume.Title</div>
+                }
+            </div>
+        </section>
+
+        @if (!string.IsNullOrWhiteSpace(course.Description))
+        {
+            <section class="panel overview-about md">@Md.Render(course.Description)</section>
+        }
+
+        <div class="row-title with-filters">
+            <h2>@L["Course content"]</h2>
+            @if (course.Sections.Count > 1)
+            {
+                <button class="btn ghost small" @onclick="ToggleAll">@(open.Count == course.Sections.Count ? L["Collapse all"] : L["Expand all"])</button>
+            }
+        </div>
+        <div class="curriculum">
+            @for (var i = 0; i < course.Sections.Count; i++)
+            {
+                var si = i;
+                var section = course.Sections[si];
+                var done = section.Lessons.Count(IsDone);
+                var isOpen = open.Contains(si);
+                <div class="cur-section @(isOpen ? "open" : "")">
+                    <button class="cur-head" @onclick="() => Toggle(si)" aria-expanded="@(isOpen ? "true" : "false")">
+                        <span class="chev">⌄</span>
+                        <span class="cur-title">@SectionTitle(section)</span>
+                        <span class="muted tiny">@(done > 0 ? $"{done} / " : "")@L["{0} lessons", section.Lessons.Count]@(section.TotalSeconds > 0 ? $" · {Format.Long(section.TotalSeconds)}" : "")</span>
+                    </button>
+                    @if (isOpen)
+                    {
+                        <ul>
+                            @foreach (var l in section.Lessons)
+                            {
+                                var p = progress.GetValueOrDefault(l.RelativePath);
+                                <li class="@(IsDone(l) ? "done" : "") @(l.Id == stats.ResumeLesson?.Id ? "next" : "")">
+                                    <a href="@PlayHref(l)">
+                                        <span class="cur-icon">@(IsDone(l) ? "✓" : l.Kind == LessonKind.Video ? "▶" : "📄")</span>
+                                        <span class="cur-lesson">@l.Title</span>
+                                        @if (p is { Completed: false, PositionSeconds: > 0, DurationSeconds: > 0 })
+                                        {
+                                            <span class="cur-bar"><span style="width:@(p.PositionSeconds / p.DurationSeconds * 100)%"></span></span>
+                                        }
+                                        <span class="muted tiny">@(l.Kind == LessonKind.Video ? Format.Clock(l.DurationSeconds) : L["Reading"])</span>
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            }
+        </div>
+    </main>
+}
+
+@code {
+    [Parameter] public string CourseId { get; set; } = "";
+
+    private Course? course;
+    private bool loaded;
+    private CourseStats stats = new(0, 0, null, null);
+    private Dictionary<string, LessonProgress> progress = [];
+    private CourseMeta meta = new();
+    private readonly HashSet<int> open = [];
+
+    private string PrimaryLabel => stats switch
+    {
+        { Started: false } => "Start course",
+        { Total: > 0 } s when s.Completed == s.Total => "Watch again",
+        _ => "Resume",
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await EnsureUserAsync();
+        course = Library.GetCourse(CourseId);
+        if (course is not null && !CourseLibrary.CanAccess(course, Access)) course = null;
+        if (course is not null)
+        {
+            progress = await ProgressService.ForCourseAsync(UserId, course);
+            stats = ProgressService.Stats(course, progress);
+            meta = await UserData.MetaAsync(UserId, course);
+            open.Clear();
+            // Open the section you'd continue in; a short course opens everything.
+            var at = stats.ResumeLesson is { } r ? course.Sections.ToList().FindIndex(s => s.Lessons.Contains(r)) : 0;
+            if (course.Sections.Count <= 3) open.UnionWith(Enumerable.Range(0, course.Sections.Count));
+            else if (at >= 0) open.Add(at);
+        }
+        loaded = true;
+    }
+
+    private string PlayHref(Lesson? l) => l is null ? "" : $"course/{course!.Id}/{l.Id}?play=1";
+    private bool IsDone(Lesson l) => progress.TryGetValue(l.RelativePath, out var p) && p.Completed;
+    private string SectionTitle(Section s) => Format.SectionTitle(L, s.FullTitle);
+
+    private void Toggle(int i) { if (!open.Remove(i)) open.Add(i); }
+
+    private void ToggleAll()
+    {
+        if (open.Count == course!.Sections.Count) open.Clear();
+        else open.UnionWith(Enumerable.Range(0, course.Sections.Count));
+    }
+
+    private async Task ToggleFavorite() => meta = await UserData.UpdateMetaAsync(UserId, course!, x => x.Favorite = !x.Favorite);
+}

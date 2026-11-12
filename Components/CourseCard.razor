@@ -1,0 +1,52 @@
+@inject MediaTools Tools
+
+@{
+    var firstVideo = Course.AllLessons.FirstOrDefault(l => l.Kind == LessonKind.Video);
+    var complete = Stats is { Total: > 0 } s0 && s0.Completed == s0.Total;
+}
+<div class="card">
+    <a href="@($"course/{Course.Id}")" class="card-link" title="@L["Course details"]">
+        <div class="thumb" style="background:@Format.Gradient(Course.Title)">
+            <span class="initials">@Format.Initials(Course.Title)</span>
+            @if (Course.CoverPath is not null || (firstVideo is not null && Tools.Ffmpeg is not null))
+            {
+                <span class="thumb-img" style="background-image:url('@Course.CoverUrl')"></span>
+            }
+            else if (firstVideo is not null && firstVideo.FullPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+            {
+                @* No ffmpeg: let the browser render a frame from the first lesson. *@
+                <video class="thumb-frame" src="@($"{firstVideo.MediaUrl}#t=20")" preload="metadata" muted playsinline tabindex="-1"></video>
+            }
+            @if (Stats?.Started == true)
+            {
+                <div class="thumb-bar"><span style="width:@(Stats.Percent)%"></span></div>
+            }
+        </div>
+        <div class="card-body">
+            <h3>@Course.Title</h3>
+            @if (!string.IsNullOrWhiteSpace(Course.Author)) { <div class="muted tiny">@Course.Author</div> }
+            <div class="muted tiny">
+                @L["{0} lessons", Course.LessonCount]@(Course.TotalSeconds > 0 ? $" · {Format.Long(Course.TotalSeconds)}" : "")
+            </div>
+            @if (Stats?.Started == true)
+            {
+                <div class="card-progress">
+                    <div class="bar"><span style="width:@(Stats.Percent)%"></span></div>
+                    <span class="tiny">@(complete ? "✓ " + L["Completed"] : $"{Stats.Percent}%")</span>
+                </div>
+            }
+            else
+            {
+                <div class="tiny muted card-new">@L["Not started"]</div>
+            }
+        </div>
+    </a>
+    <button class="fav @(Favorite ? "on" : "")" title="@(Favorite ? L["Remove from favourites"] : L["Add to favourites"])" @onclick="OnToggleFavorite">@(Favorite ? "★" : "☆")</button>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Course Course { get; set; } = default!;
+    [Parameter] public CourseStats? Stats { get; set; }
+    [Parameter] public bool Favorite { get; set; }
+    [Parameter] public EventCallback OnToggleFavorite { get; set; }
+}

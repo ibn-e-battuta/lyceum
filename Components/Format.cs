@@ -52,4 +52,13 @@ public static class Format
         string.Concat(title.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(w => char.IsLetter(w[0]) && w.Length > 2 || char.IsUpper(w[0]))
             .Take(2).Select(w => char.ToUpperInvariant(w[0])));
+
+    /// <summary>Localizes the generic section names course folders tend to use ("Section 3: Intro", "Main Lessons").</summary>
+    public static string SectionTitle(Lyceum.Services.Localizer L, string? title)
+    {
+        if (title is null) return "";
+        if (title is "Course Content" or "Main Lessons" or "Getting Started") return L[title];
+        var m = System.Text.RegularExpressions.Regex.Match(title, @"^Section (\d+)(: (.*))?$");
+        return m.Success ? L["Section {0}", m.Groups[1].Value] + (m.Groups[3].Success ? ": " + m.Groups[3].Value : "") : title;
+    }
 }

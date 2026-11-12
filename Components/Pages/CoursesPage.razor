@@ -1,0 +1,157 @@
+@page "/courses"
+@inherits AppPage
+@implements IDisposable
+@inject CourseLibrary Library
+@inject ProgressService ProgressService
+@inject UserDataService UserData
+
+<PageTitle>@L["My courses"] · Lyceum</PageTitle>
+
+<TopNav>
+    <input class="search" type="search" placeholder="@L["Filter courses…"]" @bind="query" @bind:event="oninput" />
+    @if (IsAdmin)
+    {
+        <button class="btn ghost hide-mobile" @onclick="Rescan" disabled="@scanning" title="@L["Pick up new or changed course folders"]">
+            @(scanning ? L["Scanning…"] : "↻ " + L["Rescan"])
+        </button>
+    }
+</TopNav>
+
+<main class="home">
+    @if (AllCourses.Count == 0)
+    {
+        <div class="empty">
+            <h1>@L["No courses found"]</h1>
+            <p>Put each course in its own folder inside <code>@Library.RootPath</code>. New folders show up automatically.</p>
+        </div>
+    }
+    else
+    {
+        <div class="page-head">
+            <h1 class="page-title">@L["My courses"]</h1>
+            <span class="muted">@L["{0} courses", AllCourses.Count] · @Format.Long(AllCourses.Sum(c => c.TotalSeconds))</span>
+        </div>
+
+        <div class="library-toolbar">
+            <div class="chips">
+                @foreach (var f in Filters)
+                {
+                    var n = Filtered(f).Count();
+                    if (n == 0 && f is "Favourites" or "Archived" && filter != f) continue;
+                    <button class="chip @(filter == f ? "active" : "")" @onclick="() => filter = f">@L[f] <span class="muted">@n</span></button>
+                }
+            </div>
+            <div class="toolbar-right">
+                @if (VisibleLibraries.Count > 1)
+                {
+                    <select class="library-select" @bind="libraryFilter">
+                        <option value="0">@L["All libraries"]</option>
+                        @foreach (var l in VisibleLibraries) { <option value="@l.Id">@l.Name</option> }
+                    </select>
+                }
+                <label class="sort">
+                    <span class="muted tiny">@L["Sort"]</span>
+                    <select class="library-select" @bind="sort">
+                        @foreach (var s in Sorts) { <option value="@s">@L[s]</option> }
+                    </select>
+                </label>
+            </div>
+        </div>
+
+        var shown = Sorted(Filtered(filter)).ToList();
+        @if (shown.Count == 0)
+        {
+            <p class="muted">@(string.IsNullOrWhiteSpace(query) ? L["No courses here."] : L["No course titles match “{0}”.", query.Trim()])</p>
+        }
+        else
+        {
+            <div class="grid">
+                @foreach (var c in shown)
+                {
+                    <CourseCard @key="c.Id" Course="c" Stats="@stats.GetValueOrDefault(c.Id)" Favorite="@MetaOf(c).Favorite" OnToggleFavorite="() => ToggleFavorite(c)" />
+                }
+            </div>
+        }
+    }
+</main>
+
+@code {
+    private static readonly string[] Filters = ["All", "In progress", "Not started", "Completed", "Favourites", "Archived"];
+    private static readonly string[] Sorts = ["Recently watched", "Title", "Progress", "Longest", "Shortest"];
+
+    private Dictionary<string, CourseStats> stats = [];
+    private Dictionary<string, CourseMeta> meta = [];
+    private string query = "";
+    private string filter = "All";
+    private string sort = "Recently watched";
+    private int libraryFilter;
+    private bool scanning;
+
+    private List<Course> AllCourses => Library.CoursesFor(Access).ToList();
+    private List<LibraryInfo> VisibleLibraries => Library.Libraries.Where(l => Access is null || Access.AllowsLibrary(l.Id)).Where(l => Library.Courses.Any(c => c.LibraryId == l.Id)).ToList();
+    private CourseMeta MetaOf(Course c) => meta.GetValueOrDefault(c.FolderName) ?? new CourseMeta();
+
+    private IEnumerable<Course> Filtered(string f)
+    {
+        var q = query.Trim();
+        return AllCourses
+            .Where(c => libraryFilter == 0 || c.LibraryId == libraryFilter)
+            .Where(c => q.Length == 0 || c.Title.Contains(q, StringComparison.OrdinalIgnoreCase) || (c.Author?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Where(c =>
+            {
+                var s = stats.GetValueOrDefault(c.Id);
+                var m = MetaOf(c);
+                var complete = s is { Total: > 0 } && s.Completed == s.Total;
+                return f switch
+                {
+                    "Archived" => m.Archived,
+                    _ when m.Archived => false,
+                    "In progress" => s?.Started == true && !complete,
+                    "Not started" => s?.Started != true,
+                    "Completed" => complete,
+                    "Favourites" => m.Favorite,
+                    _ => true,
+                };
+            });
+    }
+
+    private IEnumerable<Course> Sorted(IEnumerable<Course> courses)
+    {
+        var byFav = courses.OrderByDescending(c => MetaOf(c).Favorite);
+        return sort switch
+        {
+            "Title" => byFav.ThenBy(c => c.Title, StringComparer.OrdinalIgnoreCase),
+            "Progress" => byFav.ThenByDescending(c => stats.GetValueOrDefault(c.Id)?.Percent ?? -1).ThenBy(c => c.Title),
+            "Longest" => byFav.ThenByDescending(c => c.TotalSeconds),
+            "Shortest" => byFav.ThenBy(c => c.TotalSeconds),
+            _ => byFav.ThenByDescending(c => stats.GetValueOrDefault(c.Id)?.LastWatched ?? DateTime.MinValue).ThenBy(c => c.Title),
+        };
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EnsureUserAsync();
+        if (SendGuestToCourse()) return;
+        Library.Changed += OnLibraryChanged;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        stats = await ProgressService.StatsAsync(UserId, AllCourses);
+        meta = await UserData.AllMetaAsync(UserId);
+    }
+
+    private void OnLibraryChanged() => InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    public void Dispose() => Library.Changed -= OnLibraryChanged;
+
+    private async Task Rescan()
+    {
+        scanning = true;
+        await Library.RescanAsync();
+        await LoadAsync();
+        scanning = false;
+    }
+
+    private async Task ToggleFavorite(Course c) => meta[c.FolderName] = await UserData.UpdateMetaAsync(UserId, c, x => x.Favorite = !x.Favorite);
+}
