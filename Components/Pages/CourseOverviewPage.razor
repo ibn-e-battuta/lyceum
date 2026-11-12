@@ -93,7 +93,7 @@ else
                 <button class="btn ghost small" @onclick="ToggleAll">@(open.Count == course.Sections.Count ? L["Collapse all"] : L["Expand all"])</button>
             }
         </div>
-        <div class="curriculum">
+        <div class="course-outline">
             @for (var i = 0; i < course.Sections.Count; i++)
             {
                 var si = i;
