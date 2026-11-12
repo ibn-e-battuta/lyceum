@@ -1,0 +1,8 @@
+@* An icon from wwwroot/icons.svg (Lucide). It takes the colour and size of the text around it. *@
+<svg class="icon @Class" aria-hidden="true" focusable="false"><use href="@($"icons.svg#{Name}")" /></svg>
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = "";
+    /// <summary>Extra classes, for example "filled" for a solid star.</summary>
+    [Parameter] public string? Class { get; set; }
+}

@@ -16,7 +16,7 @@
     @if (IsAdmin)
     {
         <button class="btn ghost hide-mobile" @onclick="Rescan" disabled="@scanning" title="Pick up new or changed course folders">
-            @(scanning ? "Scanning…" : "↻ Rescan")
+            @if (scanning) { @("Scanning…") } else { <Icon Name="refresh-cw" /> @("Rescan") }
         </button>
     }
 </TopNav>
@@ -100,14 +100,14 @@
                             <circle cx="18" cy="18" r="15.5" class="ring-fg" style="stroke-dasharray:@((pct * 0.974).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)) 100" />
                         </svg>
                         <div>
-                            <strong>@(todayMinutes >= g ? "🎉 " + L["Daily goal reached"] : L["{0} of {1} minutes today", todayMinutes, g])</strong>
+                            <strong class="with-icon">@if (todayMinutes >= g) { <Icon Name="party-popper" /> @L["Daily goal reached"] } else { @L["{0} of {1} minutes today", todayMinutes, g] }</strong>
                             <div class="muted tiny">@L["Your daily goal"] · <a class="accent" href="settings#account">@L["change"]</a></div>
                         </div>
                     </div>
                 }
                 @if (dueCards > 0)
                 {
-                    <a class="due-cards" href="review">🃏 @L["{0} flashcards to review", dueCards] →</a>
+                    <a class="due-cards with-icon" href="review"><Icon Name="layers" /> @L["{0} flashcards to review", dueCards] <Icon Name="arrow-right" Class="trailing" /></a>
                 }
             </div>
         }
@@ -121,7 +121,7 @@
                     var s = stats[c.Id];
                     <a class="continue-card" href="@($"{ResumeHref(c)}?play=1")" title="@L["Resume"]">
                         <div class="thumb small" style="@ThumbStyle(c, s.ResumeLesson)">
-                            <span class="play">▶</span>
+                            <span class="play"><Icon Name="play" /></span>
                         </div>
                         <div class="continue-body">
                             <div class="muted tiny">@c.Title</div>
@@ -136,7 +136,7 @@
 
         @if (paths.Count > 0)
         {
-            <h2 class="row-title">@L["Learning paths"] <a class="tiny accent" href="paths">@L["Manage"] →</a></h2>
+            <h2 class="row-title">@L["Learning paths"] <a class="tiny accent" href="paths">@L["Manage"] <Icon Name="arrow-right" Class="trailing" /></a></h2>
             <div class="continue">
                 @foreach (var p in paths)
                 {
@@ -146,8 +146,8 @@
                     var next = courses.FirstOrDefault(c => stats[c.Id].Completed < stats[c.Id].Total);
                     <a class="continue-card path-card" href="@(next is null ? "/paths" : ResumeHref(next))">
                         <div class="continue-body">
-                            <div class="continue-lesson">🧭 @p.Name</div>
-                            <div class="muted tiny">@courses.Count courses · next: @(next?.Title ?? "all done 🎉")</div>
+                            <div class="continue-lesson with-icon"><Icon Name="compass" /> @p.Name</div>
+                            <div class="muted tiny">@courses.Count courses · next: @(next?.Title ?? "all done")</div>
                             <div class="bar"><span style="width:@(total == 0 ? 0 : 100 * done / total)%"></span></div>
                             <div class="muted tiny">@(total == 0 ? 0 : 100 * done / total)% complete</div>
                         </div>
@@ -168,7 +168,7 @@
                             @switch (f.Type)
                             {
                                 case ActivityType.CourseStarted: @L["started"] break;
-                                case ActivityType.CourseCompleted: @("🎓 " + L["finished"]) break;
+                                case ActivityType.CourseCompleted: <Icon Name="graduation-cap" /> @L["finished"] break;
                                 default: @(f.Count == 1 ? L["completed a lesson in"] : L["completed {0} lessons in", f.Count]) break;
                             }
                         </span>
@@ -183,7 +183,7 @@
         {
             <h2 class="row-title">
                 @(inProgress.Count == 0 ? L["Pick a course to start"] : L["Start something new"])
-                <a class="tiny accent" href="courses">@L["All {0} courses", VisibleCourses.Count] →</a>
+                <a class="tiny accent" href="courses">@L["All {0} courses", VisibleCourses.Count] <Icon Name="arrow-right" Class="trailing" /></a>
             </h2>
             <div class="grid">
                 @foreach (var c in suggestions) { @CourseCard(c) }
@@ -191,7 +191,7 @@
         }
         else
         {
-            <p class="row-title"><a class="accent" href="courses">@L["Browse all {0} courses", VisibleCourses.Count] →</a></p>
+            <p class="row-title"><a class="accent" href="courses">@L["Browse all {0} courses", VisibleCourses.Count] <Icon Name="arrow-right" Class="trailing" /></a></p>
         }
     }
 </main>
@@ -304,7 +304,7 @@
         }
         else
         {
-            <span class="lthumb doc">📄</span>
+            <span class="lthumb doc"><Icon Name="file-text" /></span>
         }
     };
 

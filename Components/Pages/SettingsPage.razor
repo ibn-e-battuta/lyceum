@@ -74,10 +74,10 @@
     </section>
 
     <section class="panel" id="security">
-        <h2>🔐 @L["Two-factor sign-in"]</h2>
+        <h2>@L["Two-factor sign-in"]</h2>
         @if (Me?.TotpEnabled == true)
         {
-            <p class="good">✓ @L["On. Signing in asks for a code from your authenticator app."]</p>
+            <p class="good"><Icon Name="circle-check" /> @L["On. Signing in asks for a code from your authenticator app."]</p>
             <p class="muted tiny">@L["{0} recovery codes left.", recoveryLeft]</p>
             @if (recoveryCodes is not null)
             {
@@ -114,7 +114,7 @@
     </section>
 
     <section class="panel" id="goals">
-        <h2>🎯 @L["Daily goal & reminders"]</h2>
+        <h2>@L["Daily goal & reminders"]</h2>
         <p class="muted tiny">@L["Set how many minutes you want to learn each day. At the time you choose, Lyceum sends a push notification to your ntfy topic if you haven't reached it yet (and when flashcards are due)."]</p>
         <div class="row form-row">
             <label class="field"><span>@L["Minutes per day"]</span><input type="number" min="0" max="600" @bind="goalMinutes" /></label>
@@ -149,7 +149,7 @@
             <div class="job">
                 <span class="job-title">@k.Name <code>@k.Prefix…</code></span>
                 <span class="muted tiny">@L["created {0}", Format.Ago(k.CreatedAt)] · @(k.LastUsedAt is { } u ? L["used {0}", Format.Ago(u)] : L["never used"])</span>
-                <button class="icon-btn" title="@L["Delete"]" @onclick="() => DeleteKey(k)">🗑</button>
+                <button class="icon-btn" title="@L["Delete"]" @onclick="() => DeleteKey(k)"><Icon Name="trash-2" /></button>
             </div>
         }
         <div class="row form-row">
@@ -176,7 +176,7 @@
                                 <label class="toggle">
                                     <input type="checkbox" checked="@u.IsAdmin" disabled="@(u.Id == UserId || u.IsKid)" @onchange="e => SetAdmin(u, (bool)e.Value!)" /> admin
                                 </label>
-                                @if (u.TotpEnabled) { <div class="tiny">🔐 2FA <button class="link" @onclick="() => ResetTotp(u)">@L["reset"]</button></div> }
+                                @if (u.TotpEnabled) { <div class="tiny"><Icon Name="lock-keyhole" /> 2FA <button class="link" @onclick="() => ResetTotp(u)">@L["reset"]</button></div> }
                             </td>
                             <td>
                                 @if (!u.IsAdmin)
@@ -184,7 +184,7 @@
                                     <label class="toggle tiny"><input type="checkbox" checked="@u.IsKid" @onchange="e => SetKid(u, (bool)e.Value!, u.DailyLimitMinutes)" /> @L["kid"]</label>
                                     @if (u.IsKid)
                                     {
-                                        <label class="tiny limit">⏳ <input type="number" min="0" max="600" value="@(u.DailyLimitMinutes ?? 0)" @onchange="e => SetKid(u, true, int.TryParse(e.Value?.ToString(), out var m) ? m : null)" /> @L["min/day (0 = no limit)"]</label>
+                                        <label class="tiny limit"><Icon Name="hourglass" /> <input type="number" min="0" max="600" value="@(u.DailyLimitMinutes ?? 0)" @onchange="e => SetKid(u, true, int.TryParse(e.Value?.ToString(), out var m) ? m : null)" /> @L["min/day (0 = no limit)"]</label>
                                     }
                                 }
                             </td>
@@ -256,8 +256,8 @@
                     {
                         <span class="job-title"><strong>@lib.Name</strong> <code>@lib.Root</code> @(lib.Id == 1 ? "· " + L["from configuration"] : "")</span>
                         <span class="muted tiny">@L["{0} courses", Library.Courses.Count(c => c.LibraryId == lib.Id)]</span>
-                        <button class="icon-btn" title="@L["Edit"]" @onclick="() => { editLib = lib.Id; editLibName = lib.Name; editLibPath = lib.Root; }">✎</button>
-                        @if (lib.Id != 1) { <button class="icon-btn" title="@L["Remove library (files stay on disk)"]" @onclick="() => RemoveLibrary(lib)">🗑</button> }
+                        <button class="icon-btn" title="@L["Edit"]" @onclick="() => { editLib = lib.Id; editLibName = lib.Name; editLibPath = lib.Root; }"><Icon Name="pencil" /></button>
+                        @if (lib.Id != 1) { <button class="icon-btn" title="@L["Remove library (files stay on disk)"]" @onclick="() => RemoveLibrary(lib)"><Icon Name="trash-2" /></button> }
                     }
                 </div>
             }
@@ -265,7 +265,7 @@
                 <input placeholder="@L["Name, e.g. Kids"]" @bind="newLibName" />
                 <input placeholder="@L["Folder, e.g. /media/kids"]" @bind="newLibPath" />
                 <button class="btn ghost small" @onclick="AddLibrary">@L["Add library"]</button>
-                <button class="btn ghost small" @onclick="Rescan" disabled="@scanning">@(scanning ? L["Scanning…"] : "↻ " + L["Rescan now"])</button>
+                <button class="btn ghost small" @onclick="Rescan" disabled="@scanning">@if (scanning) { @L["Scanning…"] } else { <Icon Name="refresh-cw" /> @L["Rescan now"] }</button>
             </div>
             @if (libMessage is not null) { <p class="tiny @(libFailed ? "error" : "good")">@libMessage</p> }
             <p class="muted tiny">@L["Last scanned {0}. New, renamed or removed course folders are picked up automatically.", Format.Ago(Library.LastScan)]</p>
@@ -396,7 +396,7 @@
                     <span class="job-title"><strong>@(t.Type == "ntfy" ? "ntfy" : "Webhook")</strong> <code>@t.Url</code></span>
                     <span class="muted tiny">@string.Join(", ", EventsOf(t))</span>
                     <button class="btn ghost small" @onclick="() => TestTarget(t)">@L["Test"]</button>
-                    <button class="icon-btn" title="@L["Delete"]" @onclick="() => RemoveTarget(t)">🗑</button>
+                    <button class="icon-btn" title="@L["Delete"]" @onclick="() => RemoveTarget(t)"><Icon Name="trash-2" /></button>
                 </div>
             }
             <h3>@L["Add a destination"]</h3>
@@ -435,13 +435,13 @@
                 </div>
             </div>
         }
-        <p class="muted tiny">@L["To install it like an app: iPhone/iPad — Safari → Share → Add to Home Screen. Android — Chrome → ⋮ → Install app. Use ⬇ Save offline on a lesson to watch without internet."]</p>
+        <p class="muted tiny">@L["To install it like an app: iPhone/iPad — Safari → Share → Add to Home Screen. Android — Chrome → ⋮ → Install app. Use Save offline on a lesson to watch without internet."]</p>
     </section>
 
     @if (IsAdmin)
     {
         <section class="panel" id="guests">
-            <h2>🔗 @L["Guest links"]</h2>
+            <h2>@L["Guest links"]</h2>
             <p class="muted tiny">@L["People can create links on a course's Overview tab. Each opens only that course, until it expires."]</p>
             @if (allGuestLinks.Count == 0) { <p class="muted">@L["No guest links."]</p> }
             @foreach (var g in allGuestLinks)
@@ -450,13 +450,13 @@
                 <div class="job">
                     <span class="job-title"><strong>@g.Label</strong> · @(gc?.Title ?? g.CoursePath)</span>
                     <span class="muted tiny">@L["by {0}", g.CreatedBy] · @(g.Expired ? L["expired"] : L["until {0}", g.ExpiresAt.ToLocalTime().ToString("d MMM yyyy")]) · @L["{0} visits", g.Visits]</span>
-                    <button class="icon-btn" title="@L["Revoke"]" @onclick="() => RevokeGuest(g)">🗑</button>
+                    <button class="icon-btn" title="@L["Revoke"]" @onclick="() => RevokeGuest(g)"><Icon Name="trash-2" /></button>
                 </div>
             }
         </section>
 
         <section class="panel" id="server-backups">
-            <h2>🗄 @L["Server backups"]</h2>
+            <h2>@L["Server backups"]</h2>
             <p class="muted tiny">@L["A daily zip of the database, sign-in keys and transcripts, kept in {0}. To restore, stop Lyceum and unzip it into /config.", Backups.Folder]</p>
             <div class="row form-row">
                 <label class="toggle"><input type="checkbox" @bind="backupOn" /> @L["Back up every day"]</label>
@@ -475,13 +475,13 @@
                 <div class="job">
                     <span class="job-title"><a class="accent" href="@($"api/admin/backups/{b.Name}")" download>@b.Name</a></span>
                     <span class="muted tiny">@Format.Bytes(b.Size) · @Format.Ago(b.CreatedAt)</span>
-                    <button class="icon-btn" title="@L["Delete"]" @onclick="() => { Backups.Delete(b.Name); }">🗑</button>
+                    <button class="icon-btn" title="@L["Delete"]" @onclick="() => { Backups.Delete(b.Name); }"><Icon Name="trash-2" /></button>
                 </div>
             }
             <h3>@L["Monitoring"]</h3>
             @if (Config.GetValue<bool>("Lyceum:Metrics:Enabled"))
             {
-                <p class="tiny">✓ @L["Prometheus metrics are available at"] <code>@($"{Nav.BaseUri}metrics")</code>@(string.IsNullOrEmpty(Config["Lyceum:Metrics:Token"]) ? "" : " " + L["(bearer token required)"])</p>
+                <p class="tiny"><Icon Name="circle-check" /> @L["Prometheus metrics are available at"] <code>@($"{Nav.BaseUri}metrics")</code>@(string.IsNullOrEmpty(Config["Lyceum:Metrics:Token"]) ? "" : " " + L["(bearer token required)"])</p>
             }
             else
             {
@@ -494,8 +494,8 @@
         <h2>@L["Backup"]</h2>
         <p class="muted tiny">@L["Your own progress, notes, bookmarks, stats, favourites and learning paths, in one JSON file. A backup can be restored into any account."]</p>
         <div class="row">
-            <a class="btn primary" href="api/export" download>⬇ @L["Export backup"]</a>
-            <a class="btn ghost" href="api/notes.md" download>⬇ @L["Notes as Markdown"]</a>
+            <a class="btn primary" href="api/export" download><Icon Name="download" /> @L["Export backup"]</a>
+            <a class="btn ghost" href="api/notes.md" download><Icon Name="download" /> @L["Notes as Markdown"]</a>
         </div>
         <h3>@L["Restore"]</h3>
         <p class="muted tiny">@L["Restoring replaces everything currently saved in your account with the backup's contents."]</p>

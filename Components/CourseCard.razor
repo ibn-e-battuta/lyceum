@@ -32,7 +32,7 @@
             {
                 <div class="card-progress">
                     <div class="bar"><span style="width:@(Stats.Percent)%"></span></div>
-                    <span class="tiny">@(complete ? "✓ " + L["Completed"] : $"{Stats.Percent}%")</span>
+                    <span class="tiny with-icon">@if (complete) { <Icon Name="circle-check" /> @L["Completed"] } else { @($"{Stats.Percent}%") }</span>
                 </div>
             }
             else
@@ -41,7 +41,7 @@
             }
         </div>
     </a>
-    <button class="fav @(Favorite ? "on" : "")" title="@(Favorite ? L["Remove from favourites"] : L["Add to favourites"])" @onclick="OnToggleFavorite">@(Favorite ? "★" : "☆")</button>
+    <button class="fav @(Favorite ? "on" : "")" title="@(Favorite ? L["Remove from favourites"] : L["Add to favourites"])" @onclick="OnToggleFavorite"><Icon Name="star" Class="@(Favorite ? "filled" : null)" /></button>
 </div>
 
 @code {

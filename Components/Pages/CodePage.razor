@@ -16,8 +16,8 @@ else
         <a class="brand" href="./" title="My learning"><span class="logo" aria-hidden="true"></span></a>
         <a class="muted hide-mobile" href="@($"course/{r.Course.Id}")">@r.Course.Title</a>
         <span class="muted hide-mobile">/</span>
-        <div class="course-title">📁 @r.Folder.Name</div>
-        <a class="btn ghost small" href="@($"code/{ResourceId}/zip")" download>⬇ Zip</a>
+        <div class="course-title with-icon"><Icon Name="folder" /> @r.Folder.Name</div>
+        <a class="btn ghost small" href="@($"code/{ResourceId}/zip")" download><Icon Name="download" /> Zip</a>
         @if (CanOpenLocalApps && IsAdmin)
         {
             <button class="btn ghost small" @onclick='() => Open("vscode")'>VS Code</button>

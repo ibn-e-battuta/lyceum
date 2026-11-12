@@ -16,7 +16,7 @@
     else
     {
         <div class="summary">
-            <div><strong>🔥 @s.CurrentStreak</strong><span>day streak</span></div>
+            <div><strong class="with-icon"><Icon Name="flame" /> @s.CurrentStreak</strong><span>day streak</span></div>
             <div><strong>@s.LongestStreak</strong><span>longest streak</span></div>
             <div><strong>@Hours(s.Last7DaysSeconds)</strong><span>last 7 days</span></div>
             <div><strong>@Hours(s.DailyAverageSeconds)</strong><span>daily average (14 days)</span></div>
@@ -59,7 +59,7 @@
                             <td>@Hours(f.WatchedSeconds)</td>
                             <td>@(f.RemainingSeconds > 0 ? Format.Long(f.RemainingSeconds) : "—")</td>
                             <td>
-                                @if (f.Stats.Completed == f.Stats.Total) { <a class="good" href="@($"certificate/{f.Course.Id}")">🎓 @L["Certificate"]</a> }
+                                @if (f.Stats.Completed == f.Stats.Total) { <a class="good" href="@($"certificate/{f.Course.Id}")"><Icon Name="graduation-cap" /> @L["Certificate"]</a> }
                                 else if (f.EstimatedFinish is { } d) { <span>@d.ToString("d MMM yyyy")</span> <span class="muted tiny">(@((d.DayNumber - Today.DayNumber)) days)</span> }
                                 else { <span class="muted tiny">Watch a bit more to get an estimate</span> }
                             </td>

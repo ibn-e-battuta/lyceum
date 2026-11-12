@@ -64,7 +64,7 @@
       const root = $("list");
       root.innerHTML = "";
       if (!items.length) {
-        root.innerHTML = `<div class="empty small"><p class="muted">Nothing saved yet. Open a lesson and choose <strong>⬇ Save offline</strong>, or save a whole course from its lesson list.</p></div>`;
+        root.innerHTML = `<div class="empty small"><p class="muted">Nothing saved yet. Open a lesson and choose <strong>Save offline</strong>, or save a whole course from its lesson list.</p></div>`;
         return;
       }
       const byCourse = Map.groupBy ? Map.groupBy(items, (i) => i.courseTitle) : items.reduce((m, i) => m.set(i.courseTitle, [...(m.get(i.courseTitle) || []), i]), new Map());
@@ -76,7 +76,7 @@
         for (const l of lessons) {
           const row = document.createElement("div");
           row.className = "dl-item" + (current?.id === l.id ? " current" : "");
-          row.innerHTML = `<img alt="" loading="lazy"><div><div class="t"></div><div class="muted tiny"></div></div><button class="icon-btn" title="Remove download">🗑</button>`;
+          row.innerHTML = `<img alt="" loading="lazy"><div><div class="t"></div><div class="muted tiny"></div></div><button class="icon-btn" title="Remove download"><svg class="icon" aria-hidden="true"><use href="icons.svg#trash-2"/></svg></button>`;
           row.querySelector("img").src = `offline-thumb/${l.id}`;
           row.querySelector(".t").textContent = l.title;
           row.querySelector(".tiny").textContent = `${l.duration ? clock(l.duration) + " · " : ""}${fmt(l.size || 0)}${l.position > 5 ? " · watched to " + clock(l.position) : ""}`;

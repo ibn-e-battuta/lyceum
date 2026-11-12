@@ -18,7 +18,7 @@
         <div class="empty">
             <h1>@L["Not finished yet"]</h1>
             <p class="muted">@L["Complete all {0} lessons of {1} to get your certificate. You've done {2}.", stats.Total, course.Title, stats.Completed]</p>
-            <a class="accent" href="@($"course/{course.Id}")">@L["Continue the course"] →</a>
+            <a class="accent" href="@($"course/{course.Id}")">@L["Continue the course"] <Icon Name="arrow-right" Class="trailing" /></a>
         </div>
     }
     else
@@ -38,7 +38,7 @@
                     @if (course.TotalSeconds > 0) { <div>@L["Video"]<strong>@Format.Long(course.TotalSeconds)</strong></div> }
                     <div>@L["Certificate ID"]<strong>@certificateId</strong></div>
                 </div>
-                <div class="cert-seal">🎓</div>
+                <div class="cert-seal"><Icon Name="graduation-cap" /></div>
             </article>
             <div class="cert-actions">
                 <button class="btn primary" @onclick="Print">@L["Print or save as PDF"]</button>

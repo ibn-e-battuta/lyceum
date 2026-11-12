@@ -12,7 +12,7 @@
 <main class="home narrow">
     <div class="page-head">
         <h1 class="page-title">My notes</h1>
-        <a class="btn ghost" href="api/notes.md" download>⬇ Export all as Markdown</a>
+        <a class="btn ghost" href="api/notes.md" download><Icon Name="download" /> Export all as Markdown</a>
     </div>
 
     <div class="chips">
@@ -48,7 +48,7 @@
                     @if (found is { } f)
                     {
                         <a class="stamp" href="@($"course/{f.Course.Id}/{f.Lesson.Id}?t={(int)n.Seconds}")" title="Jump to this moment">
-                            @(f.Lesson.Kind == LessonKind.Video ? Format.Clock(Math.Max(n.Seconds, 0.5)) : "📄")
+                            @(f.Lesson.Kind == LessonKind.Video ? Format.Clock(Math.Max(n.Seconds, 0.5)) : null)@if (f.Lesson.Kind != LessonKind.Video) { <Icon Name="file-text" /> }
                         </a>
                     }
                     else
@@ -56,12 +56,12 @@
                         <span class="stamp" title="Lesson file missing">?</span>
                     }
                     <div class="note-body">
-                        <div class="muted tiny">@(n.Kind == NoteKind.Bookmark ? "🔖 " : "")@(found?.Lesson.Title ?? n.LessonPath)</div>
+                        <div class="muted tiny">@if (n.Kind == NoteKind.Bookmark) { <Icon Name="bookmark" /> }@(found?.Lesson.Title ?? n.LessonPath)</div>
                         <div class="note-text">@(string.IsNullOrWhiteSpace(n.Text) ? "Bookmark" : n.Text)</div>
                     </div>
                     <div class="note-actions">
                         <span class="muted tiny">@Format.Ago(n.UpdatedAt)</span>
-                        <button class="icon-btn" title="Delete" @onclick="() => Delete(n)">🗑</button>
+                        <button class="icon-btn" title="Delete" @onclick="() => Delete(n)"><Icon Name="trash-2" /></button>
                     </div>
                 </div>
             }

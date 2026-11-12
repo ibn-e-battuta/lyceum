@@ -19,7 +19,7 @@
 <main class="home">
     <div class="page-head">
         <h1 class="page-title">@L["Admin dashboard"]</h1>
-        <button class="btn ghost small" @onclick="Load">↻ @L["Refresh"]</button>
+        <button class="btn ghost small" @onclick="Load"><Icon Name="refresh-cw" /> @L["Refresh"]</button>
     </div>
 
     <div class="summary">
@@ -71,7 +71,7 @@
                 @foreach (var r in rows.OrderByDescending(r => r.LastActive ?? DateTime.MinValue))
                 {
                     <tr>
-                        <td>@r.User.Name @(r.User.IsAdmin ? "★" : "")</td>
+                        <td>@r.User.Name @if (r.User.IsAdmin) { <span title="Admin"><Icon Name="star" Class="filled" /></span> }</td>
                         <td class="muted tiny">@(r.LastActive is { } t ? Format.Ago(t) : L["never"])</td>
                         <td>@Format.Long(r.Week)</td>
                         <td>@Format.Long(r.Total)</td>
@@ -111,11 +111,11 @@
                     <dt>@L[label]</dt><dd>@Format.Bytes(size)</dd>
                 }
             </dl>
-            <a class="tiny accent" href="settings#playback">@L["Manage in Settings"] →</a>
+            <a class="tiny accent" href="settings#playback">@L["Manage in Settings"] <Icon Name="arrow-right" Class="trailing" /></a>
         </section>
     </div>
 
-    <h2 class="row-title">🩺 @L["Library health"]</h2>
+    <h2 class="row-title">@L["Library health"]</h2>
     <section class="panel">
         @if (Health.Progress is { } hp)
         {
@@ -131,7 +131,7 @@
         }
         @if (Health.Last is { } report)
         {
-            @if (report.Issues.Count == 0) { <p class="good">✓ @L["Everything looks good."]</p> }
+            @if (report.Issues.Count == 0) { <p class="good"><Icon Name="circle-check" /> @L["Everything looks good."]</p> }
             @foreach (var kind in Enum.GetValues<HealthIssueKind>())
             {
                 var items = report.Issues.Where(i => i.Kind == kind).ToList();
@@ -242,8 +242,8 @@
 
     private static string HealthIcon(HealthIssueKind k) => k switch
     {
-        HealthIssueKind.Broken => "⛔", HealthIssueKind.Empty => "⛔", HealthIssueKind.NeedsConversion => "🔁",
-        HealthIssueKind.Duplicate => "👯", HealthIssueKind.MissingTranscript => "📝", _ => "🖼",
+        HealthIssueKind.Broken => "ban", HealthIssueKind.Empty => "ban", HealthIssueKind.NeedsConversion => "repeat",
+        HealthIssueKind.Duplicate => "copy", HealthIssueKind.MissingTranscript => "file-text", _ => "image",
     };
 
     private static string HealthLabel(HealthIssueKind k) => k switch

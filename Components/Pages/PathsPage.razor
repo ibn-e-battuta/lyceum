@@ -32,11 +32,11 @@
                 }
                 else
                 {
-                    <h2>🧭 @p.Name</h2>
-                    <button class="icon-btn" title="Rename" @onclick="() => { renaming = p.Id; renameText = p.Name; }">✎</button>
+                    <h2><Icon Name="compass" /> @p.Name</h2>
+                    <button class="icon-btn" title="Rename" @onclick="() => { renaming = p.Id; renameText = p.Name; }"><Icon Name="pencil" /></button>
                 }
                 <span class="push muted tiny">@PathPercent(courses.Select(x => x.Course))% complete</span>
-                <button class="icon-btn" title="Delete path" @onclick="() => Delete(p)">🗑</button>
+                <button class="icon-btn" title="Delete path" @onclick="() => Delete(p)"><Icon Name="trash-2" /></button>
             </div>
 
             <ol class="path-steps">
@@ -44,7 +44,7 @@
                 {
                     var s = course is null ? null : stats.GetValueOrDefault(course.Id);
                     <li class="@(course is not null && IsComplete(course) ? "done" : course == next ? "next" : "")">
-                        <span class="step-dot">@(course is not null && IsComplete(course) ? "✓" : "")</span>
+                        <span class="step-dot">@if (course is not null && IsComplete(course)) { <Icon Name="check" /> }</span>
                         <div class="step-body">
                             @if (course is null)
                             {
@@ -58,9 +58,9 @@
                             }
                         </div>
                         <div class="step-actions">
-                            <button class="icon-btn" title="Move up" @onclick="() => Move(p, item, -1)">↑</button>
-                            <button class="icon-btn" title="Move down" @onclick="() => Move(p, item, 1)">↓</button>
-                            <button class="icon-btn" title="Remove from path" @onclick="() => Remove(item)">✕</button>
+                            <button class="icon-btn" title="Move up" @onclick="() => Move(p, item, -1)"><Icon Name="arrow-up" /></button>
+                            <button class="icon-btn" title="Move down" @onclick="() => Move(p, item, 1)"><Icon Name="arrow-down" /></button>
+                            <button class="icon-btn" title="Remove from path" @onclick="() => Remove(item)"><Icon Name="x" /></button>
                         </div>
                     </li>
                 }
@@ -77,7 +77,7 @@
                 <button class="btn ghost small" disabled="@string.IsNullOrEmpty(adding.GetValueOrDefault(p.Id))" @onclick="() => Add(p)">Add</button>
                 @if (next is not null)
                 {
-                    <a class="btn primary small push" href="@($"course/{next.Id}")">Continue: @next.Title →</a>
+                    <a class="btn primary small push" href="@($"course/{next.Id}")">Continue: @next.Title <Icon Name="arrow-right" /></a>
                 }
             </div>
         </section>

@@ -35,7 +35,7 @@
             }
             else
             {
-                <h2>🎉 @L["All caught up"]</h2>
+                <h2><Icon Name="party-popper" /> @L["All caught up"]</h2>
                 <p class="muted">@L["No cards are due right now. Come back later — the next ones are scheduled for you."]</p>
             }
         </div>
@@ -65,7 +65,7 @@
                 </div>
                 @if (lesson is not null && course is not null)
                 {
-                    <a class="tiny accent" href="@($"course/{course.Id}/{lesson.Id}")">@L["Open the lesson"] →</a>
+                    <a class="tiny accent" href="@($"course/{course.Id}/{lesson.Id}")">@L["Open the lesson"] <Icon Name="arrow-right" Class="trailing" /></a>
                 }
             }
             else
@@ -96,7 +96,7 @@
                         <td>@c.Front<div class="muted tiny">@c.Back</div></td>
                         <td class="muted tiny">@(Library.GetCourseByFolder(c.CoursePath)?.Title ?? c.CoursePath)</td>
                         <td class="muted tiny">@(c.Due <= DateTime.UtcNow ? L["now"] : ReviewService.Human(c.Due - DateTime.UtcNow))</td>
-                        <td><button class="icon-btn" title="@L["Delete"]" @onclick="() => Delete(c)">🗑</button></td>
+                        <td><button class="icon-btn" title="@L["Delete"]" @onclick="() => Delete(c)"><Icon Name="trash-2" /></button></td>
                     </tr>
                 }
             </tbody>

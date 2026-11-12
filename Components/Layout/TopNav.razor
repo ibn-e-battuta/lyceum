@@ -25,7 +25,7 @@
         }
     </AuthorizeView>
     @ChildContent
-    <button class="icon-btn theme-btn" title="@L["Theme: {0}", L[ThemeLabel]]" @onclick="CycleTheme">@ThemeIcon</button>
+    <button class="icon-btn theme-btn" title="@L["Theme: {0}", L[ThemeLabel]]" @onclick="CycleTheme"><Icon Name="@ThemeIcon" /></button>
     <AuthorizeView>
         @if (!context.User.IsGuest())
         {
@@ -43,7 +43,7 @@
     ];
 
     private string theme = "system";
-    private string ThemeIcon => theme switch { "light" => "☀", "dark" => "☾", _ => "◐" };
+    private string ThemeIcon => theme switch { "light" => "sun", "dark" => "moon", _ => "sun-moon" };
     private string ThemeLabel => theme switch { "light" => "Light", "dark" => "Dark", _ => "System" };
 
     private bool IsActive(string href)

@@ -12,7 +12,7 @@
     @if (IsAdmin)
     {
         <button class="btn ghost hide-mobile" @onclick="Rescan" disabled="@scanning" title="@L["Pick up new or changed course folders"]">
-            @(scanning ? L["Scanning…"] : "↻ " + L["Rescan"])
+            @if (scanning) { @L["Scanning…"] } else { <Icon Name="refresh-cw" /> @L["Rescan"] }
         </button>
     }
 </TopNav>

@@ -47,7 +47,7 @@ export function seek(t) {
 
 export async function togglePip() {
   const v = state?.video;
-  if (!v) return;
+  if (!v || v.tagName !== "VIDEO") return;
   try {
     if (document.pictureInPictureElement) await document.exitPictureInPicture();
     else if (v.requestPictureInPicture) await v.requestPictureInPicture();
@@ -90,7 +90,13 @@ function setCaptions(video, on) {
 }
 
 export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntro, meta) {
+  // Switching between the video and the listening-mode audio replaces the element, and the reference
+  // passed in can still be the previous one. Use the element that is in the player now.
+  video = viewer?.querySelector(".video-wrap video, .video-wrap audio") || video;
+  const previous = state?.video;
   detach();
+  // Never leave the old element playing next to the new one (Safari keeps removed audio playing).
+  if (previous && previous !== video) { try { previous.pause(); } catch { /* already gone */ } }
   if (!video) return;
 
   let lastReport = Date.now();
@@ -172,7 +178,7 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
       }
       case "b": case "B":
         dotnet.invokeMethodAsync("AddBookmark", lessonId, video.currentTime).catch(() => {});
-        toast("🔖 Bookmarked");
+        toast("Bookmarked");
         break;
       case "n": case "N": dotnet.invokeMethodAsync("Next").catch(() => {}); break;
       default: return;
@@ -197,6 +203,10 @@ export function attach(video, viewer, dotnet, lessonId, resumeAt, rate, skipIntr
     const back = wrap.querySelector(".mini-close");
     if (back) back.onclick = (e) => { e.stopPropagation(); viewer.scrollIntoView({ behavior: "smooth", block: "start" }); };
   }
+
+  // Picture-in-picture must be requested in the click itself, so the button is wired here rather than through the server.
+  const pipBtn = document.getElementById("pip-btn");
+  if (pipBtn) pipBtn.onclick = (e) => { e.preventDefault(); if (isVideo) togglePip(); };
 
   // If metadata already loaded before we attached (cached file), run the setup now.
   if (video.readyState >= 1) handlers.loadedmetadata();
@@ -242,13 +252,14 @@ export function fadeOutAndPause(seconds) {
   const t = setInterval(() => {
     i++;
     media.volume = Math.max(0, start * (1 - i / steps));
-    if (i >= steps) { clearInterval(t); media.pause(); media.volume = start; toast("⏾"); }
+    if (i >= steps) { clearInterval(t); media.pause(); media.volume = start; toast("Sleep timer: paused"); }
   }, 100);
 }
 
 export function detach() {
   if (!state) return;
   const { video, handlers, onKey, onHide, report, observer, wrap } = state;
+  if (!document.contains(video)) { try { video.pause(); } catch { /* already gone */ } }
   report();
   for (const [ev, fn] of Object.entries(handlers)) video.removeEventListener(ev, fn);
   document.removeEventListener("keydown", onKey);

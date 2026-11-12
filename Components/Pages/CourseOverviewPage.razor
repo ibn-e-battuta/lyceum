@@ -26,7 +26,7 @@ else
     <main class="home narrow course-overview">
         @if (!IsGuest)
         {
-            <a class="back-link muted tiny" href="courses">← @L["My courses"]</a>
+            <a class="back-link muted tiny" href="courses"><Icon Name="arrow-left" /> @L["My courses"]</a>
         }
 
         <section class="overview-hero">
@@ -38,7 +38,7 @@ else
                 }
                 @if (target is not null)
                 {
-                    <span class="cover-play" aria-hidden="true">▶</span>
+                    <span class="cover-play" aria-hidden="true"><Icon Name="play" /></span>
                 }
             </a>
 
@@ -49,7 +49,7 @@ else
                     <span>@L["{0} lessons", course.LessonCount]</span>
                     @if (course.Sections.Count > 1) { <span>@L["{0} sections", course.Sections.Count]</span> }
                     @if (course.TotalSeconds > 0) { <span>@Format.Long(course.TotalSeconds)</span> }
-                    @if (course.Resources.Count > 0) { <span>💻 @L["Code included"]</span> }
+                    @if (course.Resources.Count > 0) { <span class="with-icon"><Icon Name="code" /> @L["Code included"]</span> }
                 </div>
 
                 @if (stats.Started)
@@ -63,15 +63,15 @@ else
                 <div class="overview-actions">
                     @if (target is not null)
                     {
-                        <a class="btn primary big" href="@PlayHref(target)">▶ @L[PrimaryLabel]</a>
+                        <a class="btn primary big" href="@PlayHref(target)"><Icon Name="play" Class="filled" /> @L[PrimaryLabel]</a>
                     }
                     @if (!IsGuest)
                     {
-                        <button class="btn ghost big @(meta.Favorite ? "on" : "")" @onclick="ToggleFavorite">@(meta.Favorite ? "★ " + L["Favourite"] : "☆ " + L["Add to favourites"])</button>
+                        <button class="btn ghost big @(meta.Favorite ? "on" : "")" @onclick="ToggleFavorite"><Icon Name="star" Class="@(meta.Favorite ? "filled" : null)" /> @(meta.Favorite ? L["Favourite"] : L["Add to favourites"])</button>
                     }
                     @if (complete && !IsGuest)
                     {
-                        <a class="btn ghost big" href="@($"certificate/{course.Id}")">🎓 @L["Certificate"]</a>
+                        <a class="btn ghost big" href="@($"certificate/{course.Id}")"><Icon Name="graduation-cap" /> @L["Certificate"]</a>
                     }
                 </div>
                 @if (stats.Started && stats.ResumeLesson is { } resume && !complete)
@@ -102,7 +102,7 @@ else
                 var isOpen = open.Contains(si);
                 <div class="cur-section @(isOpen ? "open" : "")">
                     <button class="cur-head" @onclick="() => Toggle(si)" aria-expanded="@(isOpen ? "true" : "false")">
-                        <span class="chev">⌄</span>
+                        <Icon Name="chevron-down" Class="chev" />
                         <span class="cur-title">@SectionTitle(section)</span>
                         <span class="muted tiny">@(done > 0 ? $"{done} / " : "")@L["{0} lessons", section.Lessons.Count]@(section.TotalSeconds > 0 ? $" · {Format.Long(section.TotalSeconds)}" : "")</span>
                     </button>
@@ -114,7 +114,7 @@ else
                                 var p = progress.GetValueOrDefault(l.RelativePath);
                                 <li class="@(IsDone(l) ? "done" : "") @(l.Id == stats.ResumeLesson?.Id ? "next" : "")">
                                     <a href="@PlayHref(l)">
-                                        <span class="cur-icon">@(IsDone(l) ? "✓" : l.Kind == LessonKind.Video ? "▶" : "📄")</span>
+                                        <span class="cur-icon"><Icon Name="@(IsDone(l) ? "check" : l.Kind == LessonKind.Video ? "play" : "file-text")" /></span>
                                         <span class="cur-lesson">@l.Title</span>
                                         @if (p is { Completed: false, PositionSeconds: > 0, DurationSeconds: > 0 })
                                         {

@@ -83,7 +83,7 @@ input[type=checkbox], input[type=radio] { width: 16px; height: 16px; margin: 0; 
   width: 32px; height: 32px; border-radius: 8px; flex: none; display: inline-block;
   background: url("icon.svg") center / cover no-repeat;
 }
-.topbar .search, .search { flex: 1; max-width: 520px; margin-left: auto; padding: 0 16px; border-radius: 999px; }
+.topbar .search, .search { flex: 1; min-width: 180px; max-width: 520px; margin-left: auto; padding: 0 16px; border-radius: 999px; }
 
 /* ---------- home ---------- */
 .home { max-width: 1320px; margin: 0 auto; padding: 32px 24px 64px; }
@@ -757,3 +757,26 @@ a.stamp:hover, button.stamp:hover { background: rgba(139,108,255,.3); }
   .summary div { min-width: 0; flex: 1 1 40%; }
   .top-progress span { display: none; }
 }
+
+/* ---------- icons (wwwroot/icons.svg, from Lucide) ---------- */
+.icon {
+  width: 1.15em; height: 1.15em; flex: none; vertical-align: -0.2em;
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.icon.filled { fill: currentColor; }
+.icon.big { width: 44px; height: 44px; stroke-width: 1.5; }
+.icon-btn .icon { width: 18px; height: 18px; }
+.check .icon { width: 12px; height: 12px; stroke-width: 3; }
+.chev.icon { width: 18px; height: 18px; }
+.step-dot .icon { width: 12px; height: 12px; stroke-width: 3; }
+.thumb .play .icon, .cover-play .icon { fill: currentColor; width: 45%; height: 45%; margin-left: 2px; }
+.cert-seal .icon { width: 30px; height: 30px; }
+.att-icon { display: inline-flex; color: var(--muted); }
+.l-meta { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.l-meta .icon { width: 12px; height: 12px; }
+.l-meta > span { display: inline-flex; align-items: center; gap: 4px; }
+.cur-icon .icon { width: 14px; height: 14px; }
+.lthumb.doc .icon { width: 22px; height: 22px; color: var(--muted); }
+.with-icon { display: inline-flex; align-items: center; gap: 6px; }
+h2 .icon, h3 .icon { color: var(--accent-2); margin-right: 4px; }
+a .icon.trailing, .icon.trailing { width: 1em; height: 1em; margin-left: 2px; vertical-align: -0.15em; }
