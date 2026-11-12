@@ -2,7 +2,7 @@ apiVersion: v2
 name: lyceum
 description: Self-hosted, Udemy-style player for video courses you own
 type: application
-version: 0.4.3
-appVersion: "0.4.3"
+version: 0.4.4
+appVersion: "0.4.4"
 license: AGPL-3.0-only
 keywords: [courses, video, e-learning, self-hosted]
